@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 This module provides an enum for better dealing with alloys names
-and a database qith alloys properties
+and a database with alloys properties
 """
 
 from enum import Enum

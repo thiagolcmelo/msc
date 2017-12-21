@@ -4,7 +4,6 @@
 this module contains some common potentials shapes, as well as properties
 of heterostructures that fit such potentials
 """
-import math
 import numpy as np
 from scipy.integrate import simps
 import scipy.constants as cte
@@ -23,7 +22,7 @@ class BarriersWellSandwich:
     it does not use segragation, so in practice, it fits only AlGaAs
     requirements
     """
-    def __init__(self, b_l, d_l, w_l, b_x, d_x, w_x):
+    def __init__(self, b_l, d_l, w_l, b_x, d_x, w_x, N=None):
         """
         Args:
         :b_l (float) is the barrier length in nanometers
@@ -44,16 +43,19 @@ class BarriersWellSandwich:
         self.valence_pct = 0.4
 
         self.core_length_nm = 2*b_l+2*d_l+w_l
-        self.surround_times = 6 # an even number will be better
+        self.surround_times = 1
+
         self.system_length_nm = (self.surround_times + 1)*self.core_length_nm
         self.bulk_length_nm = (self.surround_times/2)*self.core_length_nm
 
         # weird rule
         # 20 A -> 128 pts
         # 20 A * sqrt(2) -> 2*128=256 pts
-        #self.N = 2 ** int(math.log2(128 * (self.system_length_nm / 2.0) ** 2))
+        #self.N = 2 ** int(np.log2(128 * (self.system_length_nm / 2.0) ** 2))
+        # 1024, 100,000 [-0.15769882+0.j  0.05241221+0.j]
         self.N = 4096
-        # this function return the number of points for a given length
+
+        # this function return the number of points for a given length in nm
         self.pts = lambda l: int(l * float(self.N) / self.system_length_nm)
 
         self.x_nm = np.linspace(-self.system_length_nm/2, \
@@ -64,16 +66,21 @@ class BarriersWellSandwich:
         self.well = Database(Alloy.AlGaAs, w_x)
 
         # build the potential
-        #vd = lambda x: 0.6*(1.425+1.155*x+0.37*x**2)
-        #span_cond_gap = vd(d_x)#self.conduction_pct * self.span.parameters('eg_0')
-        #barrier_cond_gap = vd(b_x)#self.conduction_pct * self.barrier.parameters('eg_0')
-        #well_cond_gap = vd(w_x)#self.conduction_pct * self.well.parameters('eg_0')
-        span_cond_gap = self.conduction_pct * self.span.parameters('eg_0')
-        barrier_cond_gap = self.conduction_pct * self.barrier.parameters('eg_0')
-        well_cond_gap = self.conduction_pct * self.well.parameters('eg_0')
-        span_meff = self.span.effective_masses('m_e')
-        barrier_meff = self.barrier.effective_masses('m_e')
-        well_meff = self.well.effective_masses('m_e')
+        vd = lambda x: 0.6*(1.425+1.155*x+0.37*x**2)
+        span_cond_gap = vd(d_x)#self.conduction_pct * self.span.parameters('eg_0')
+        barrier_cond_gap = vd(b_x)#self.conduction_pct * self.barrier.parameters('eg_0')
+        well_cond_gap = vd(w_x)#self.conduction_pct * self.well.parameters('eg_0')
+        span_meff = 0.067
+        barrier_meff = 0.067
+        well_meff = 0.067
+
+        #span_cond_gap = self.conduction_pct * self.span.parameters('eg_0')
+        #barrier_cond_gap = self.conduction_pct * self.barrier.parameters('eg_0')
+        #well_cond_gap = self.conduction_pct * self.well.parameters('eg_0')
+        #span_meff = self.span.effective_masses('m_e')
+        #barrier_meff = self.barrier.effective_masses('m_e')
+        #well_meff = self.well.effective_masses('m_e')
+        
         
         # bulk
         self.v_ev = self.pts(self.bulk_length_nm) * [span_cond_gap]
@@ -99,6 +106,11 @@ class BarriersWellSandwich:
 
         # shift zero to span potential
         self.v_ev = np.asarray(self.v_ev) - span_cond_gap
+
+        # smooth the potential
+        #smooth_frac = int(float(self.N) / 100.0)
+        #self.v_ev = np.asarray([np.average(self.v_ev[max(0,i-smooth_frac):min(self.N-1,i+smooth_frac)]) for i in range(self.N)])
+
 
         # use numpy arrays
         self.m_eff = np.asarray(self.m_eff)
@@ -129,8 +141,9 @@ class BarriersWellSandwich:
             'm_eff': self.m_eff
         }
 
-    def generate_eigenfunctions(self, n=3, steps=2000):
+    def generate_eigenfunctions(self, n=3, steps=2000, dt=None):
         """
+        # test
         this will generate :n first eigenfunctions (and eigenvalues)
 
         Args:
@@ -139,10 +152,10 @@ class BarriersWellSandwich:
         """
 
         # NOT SURE YET
-        self.dt_s = 5.0e-18
+        self.dt_s = dt or 1.0e-15
 
         # translate properties to atomic unities
-        self.x_m = self.x_nm * 10e-9 # nm to m
+        self.x_m = self.x_nm * 1e-9 # nm to m
         self.x_au = self.x_m / self.au_l # m to au
         self.dx_au = self.x_au[1]-self.x_au[0]
 
@@ -151,6 +164,7 @@ class BarriersWellSandwich:
 
         self.dt_au = self.dt_s / self.au_t # s to au
 
+        # k grid
         self.k_au = fftfreq(self.N, d=self.dx_au)
 
         # creates numpy arrays for hold the calculated values
@@ -178,13 +192,16 @@ class BarriersWellSandwich:
                 /self.dx_au**2
             psi = psi[1:-1]
             psi_st = np.conjugate(psi)
+            
             me = np.asarray(self.m_eff[1:-1])
+            
             h_p_h = simps(psi_st * (-0.5 * second_derivative / me + \
                 self.v_au[1:-1] * psi), self.x_au[1:-1])
             return h_p_h.real * self.au2ev
         
-        for t in range(steps):
-            for s in range(n):
+        for s in range(n):
+
+            for t in range(steps):
                 # evolve once
                 states[s] = evolve_once(states[s])
 
@@ -199,8 +216,9 @@ class BarriersWellSandwich:
                 if t % 10 == 0:
                     print('t = %d, E_%d: %.4f meV' % (t, s, 1000*eigen_value(states[s])))
                 
-                # calculate eigenvalue
-                values[s] = eigen_value(states[s])
+        for s in range(n):
+            # calculate eigenvalue
+            values[s] = eigen_value(states[s])
 
         return {
             'eigenstates': states,
@@ -210,12 +228,22 @@ class BarriersWellSandwich:
 if __name__ == '__main__':
     system_properties = BarriersWellSandwich(5.0, 9.0, 8.2, 0.4, 0.3, 0.0)
     potential_shape = system_properties.get_potential_shape()
+    
     import matplotlib.pyplot as plt
-    #plt.plot(potential_shape['x'], potential_shape['potential'])
+    plt.plot(potential_shape['x'], potential_shape['potential'])
     #plt.plot(potential_shape['x'], potential_shape['m_eff'])
-
     result = system_properties.generate_eigenfunctions(2, steps=10000)
-    for p in result['eigenstates']:
-        plt.plot(potential_shape['x'], p.real)
+    for i, p in enumerate(result['eigenstates']):
+        plt.plot(potential_shape['x'], (p*np.conjugate(p)).real+result['eigenvalues'][i])
     print(result['eigenvalues'])
     plt.show()
+
+    #for dt in [1e-16, 5e-17, 1e-17, 5e-18]:
+    #    for N in 2**np.asarray(range(12,20)):
+    #        for steps in [2000, 5000, 10000, 20000]:
+    #            system_properties = BarriersWellSandwich(5.0, 9.0, 8.2, 0.4, 0.3, 0.0, N=N)
+    #            result = system_properties.generate_eigenfunctions(2, steps=steps, dt=dt)
+    #            eigenvalues = result['eigenvalues']
+    #            print('N=%d, steps=%d, dt=%.1e s, e0=%.6f meV, e1=%.6f meV' % (N, steps, dt, 1000*eigenvalues[0], 1000*eigenvalues[1]))
+
+                

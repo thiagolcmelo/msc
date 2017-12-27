@@ -81,7 +81,7 @@ class GenericPotential(object):
         self.v_au = self.v_j / self.au_e # j to au
 
         # NOT SURE YET
-        self.dt_s = dt or 1.0e-16
+        self.dt_s = dt or 1.0e-18
         self.dt_au = self.dt_s / self.au_t # s to au
 
         # k grid
@@ -119,7 +119,7 @@ class GenericPotential(object):
         evolve_once = lambda psi: exp_v2 * ifft(exp_t * fft(exp_v2 * psi))
 
         for s in range(n):
-
+            errors = np.ones(10)
             for t in range(steps):
                 # evolve once
                 states[s] = evolve_once(states[s])
@@ -133,7 +133,11 @@ class GenericPotential(object):
                 states[s] /= np.sqrt(simps(states[s] * np.conjugate(states[s]), self.x_au))
 
                 if t % 10 == 0:
-                    print('t = %d, E_%d: %.4f meV' % (t, s, 1000*eigen_value(states[s])))
+                    ev = eigen_value(states[s])
+                    print('t = %d, E_%d: %.6f meV' % (t, s, 1000*ev))
+                    #errors = errors[1:] + [ev]
+                    #if np.std(errors) < 1e-9:
+                    #    break
                 
         for s in range(n):
             # calculate eigenvalue
@@ -279,8 +283,8 @@ class BarriersWellSandwich(GenericPotential):
         self.v_ev = np.asarray(self.v_ev) - span_cond_gap
 
         # smooth the potential
-        #smooth_frac = int(float(self.N) / 500.0)
-        #self.v_ev = np.asarray([np.average(self.v_ev[max(0,i-smooth_frac):min(self.N-1,i+smooth_frac)]) for i in range(self.N)])
+        smooth_frac = int(float(self.N) / 500.0)
+        self.v_ev = np.asarray([np.average(self.v_ev[max(0,i-smooth_frac):min(self.N-1,i+smooth_frac)]) for i in range(self.N)])
 
         # use numpy arrays
         self.m_eff = np.asarray(self.m_eff)
@@ -330,7 +334,6 @@ class MultiQuantumWell(GenericPotential):
         self.x_nm = np.linspace(-self.system_length_nm/2, \
             self.system_length_nm/2, self.N)
 
-
 if __name__ == '__main__':
     #import numpy as np
     #import scipy.constants as cte
@@ -341,18 +344,18 @@ if __name__ == '__main__':
     #f = np.vectorize(lambda n: hbar * w * (0.5+n) / ev)
     #print(f(range(3)))
 
-    #system_properties = BarriersWellSandwich(5.0, 9.0, 8.2, 0.4, 0.3, 0.0)
     #system_properties = GenericPotential()
-    system_properties = MultiQuantumWell(w_n=2, total_length=150.0)
+    #system_properties = MultiQuantumWell(w_n=2, total_length=150.0)
     #system_properties = FiniteQuantumWell(wh=25.0, wl=0.5)
+    system_properties = BarriersWellSandwich(5.0, 4.0, 5.0, 0.4, 0.2, 0.0)
     potential_shape = system_properties.get_potential_shape()
     
     import matplotlib.pyplot as plt
-    plt.plot(potential_shape['x'], potential_shape['potential'])
+    plt.scatter(potential_shape['x'], potential_shape['potential'], linestyle=":")
     #plt.plot(potential_shape['x'], potential_shape['m_eff'])
-    result = system_properties.generate_eigenfunctions(20, steps=10000)
+    result = system_properties.generate_eigenfunctions(3, steps=20000)
     for i, p in enumerate(result['eigenstates']):
-        plt.plot(potential_shape['x'], (p*np.conjugate(p)).real+result['eigenvalues'][i])
+        plt.scatter(potential_shape['x'], (p*np.conjugate(p)).real+result['eigenvalues'][i])
     print(result['eigenvalues'])
     plt.show()
 

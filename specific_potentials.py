@@ -81,7 +81,7 @@ class GenericPotential(object):
         self.v_au = self.v_j / self.au_e # j to au
 
         # NOT SURE YET
-        self.dt_s = dt or 1.0e-18
+        self.dt_s = dt or 1.0e-16
         self.dt_au = self.dt_s / self.au_t # s to au
 
         # k grid
@@ -285,22 +285,50 @@ class BarriersWellSandwich(GenericPotential):
         # use numpy arrays
         self.m_eff = np.asarray(self.m_eff)
 
-class MQW:
+class MultiQuantumWell(GenericPotential):
     """
 
     """
 
-    def __init__(self, h=1.28, wn=9, tl=60):
+    def __init__(self, b_x=0.382, w_x=0.0, w_n=9, total_length=600.0):
         """
         The default values are those used by the article
 
-        `h` is the height of the well in eV
-        `wn` is the number of wells
-        `tl` is the total length of the system in nm
         """
-        self.h = h
-        self.wn = wn
-        self.tl = tl
+        super(MultiQuantumWell,self).__init__(N=8192)
+
+        self.barrier = Database(Alloy.AlGaAs, b_x)
+        self.well = Database(Alloy.AlGaAs, w_x)
+        
+        self.conduction_pct = 0.6
+        self.valence_pct = 0.4
+
+        barrier_cond_gap = 1.28#self.conduction_pct * self.barrier.parameters('eg_0')
+        well_cond_gap = 0.0#self.conduction_pct * self.well.parameters('eg_0')
+        barrier_meff = self.barrier.effective_masses('m_e')
+        well_meff = self.well.effective_masses('m_e')
+
+        self.w_n = w_n
+        self.system_length_nm = total_length
+        self.w_l = self.system_length_nm / float(2 * w_n + 1)
+        self.pts = lambda l: int(l * float(self.N) / self.system_length_nm)
+
+        self.v_ev = []
+        self.m_eff = []
+        for i in range(self.w_n):
+            self.v_ev += self.pts(self.w_l) * [barrier_cond_gap]
+            self.m_eff += self.pts(self.w_l) * [barrier_meff]
+            self.v_ev += self.pts(self.w_l) * [well_cond_gap]
+            self.m_eff += self.pts(self.w_l) * [well_meff]
+
+        self.v_ev += (self.N-len(self.v_ev)) * [barrier_cond_gap]
+        self.m_eff += (self.N-len(self.m_eff)) * [barrier_meff]
+
+        self.v_ev = np.array(self.v_ev)
+        self.m_eff = np.array(self.m_eff)
+
+        self.x_nm = np.linspace(-self.system_length_nm/2, \
+            self.system_length_nm/2, self.N)
 
 
 if __name__ == '__main__':
@@ -314,14 +342,15 @@ if __name__ == '__main__':
     #print(f(range(3)))
 
     #system_properties = BarriersWellSandwich(5.0, 9.0, 8.2, 0.4, 0.3, 0.0)
-    system_properties = GenericPotential()
+    #system_properties = GenericPotential()
+    system_properties = MultiQuantumWell(w_n=2, total_length=150.0)
     #system_properties = FiniteQuantumWell(wh=25.0, wl=0.5)
     potential_shape = system_properties.get_potential_shape()
     
     import matplotlib.pyplot as plt
     plt.plot(potential_shape['x'], potential_shape['potential'])
     #plt.plot(potential_shape['x'], potential_shape['m_eff'])
-    result = system_properties.generate_eigenfunctions(3, steps=50000)
+    result = system_properties.generate_eigenfunctions(20, steps=10000)
     for i, p in enumerate(result['eigenstates']):
         plt.plot(potential_shape['x'], (p*np.conjugate(p)).real+result['eigenvalues'][i])
     print(result['eigenvalues'])

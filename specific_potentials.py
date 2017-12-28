@@ -77,15 +77,16 @@ class GenericPotential(object):
         self.x_au = self.x_m / self.au_l # m to au
         self.dx_au = self.x_au[1]-self.x_au[0] # dx
         
+        # k grid
+        self.k_au = fftfreq(self.N, d=self.dx_au)
+
+        # et >>> j >>> au
         self.v_j = self.v_ev * self.ev # ev to j
         self.v_au = self.v_j / self.au_e # j to au
 
         # NOT SURE YET
         self.dt_s = dt or 1.0e-18
         self.dt_au = self.dt_s / self.au_t # s to au
-
-        # k grid
-        self.k_au = fftfreq(self.N, d=self.dx_au)
 
         # creates numpy arrays for hold the calculated values
         states = np.zeros((n, self.N), dtype=np.complex_)
@@ -147,6 +148,60 @@ class GenericPotential(object):
             'eigenstates': states,
             'eigenvalues': values
         }
+
+    def ajust_unities(self):
+        # translate properties to atomic unities
+        self.x_m = self.x_nm * 1.0e-9 # nm to m
+        self.x_au = self.x_m / self.au_l # m to au
+        self.dx_au = self.x_au[1]-self.x_au[0] # dx
+        
+        self.v_j = self.v_ev * self.ev # ev to j
+        self.v_au = self.v_j / self.au_e # j to au
+
+        # k grid
+        self.k_au = fftfreq(self.N, d=self.dx_au)
+
+        # NOT SURE YET
+        self.dt_s = 1.0e-18
+        self.dt_au = self.dt_s / self.au_t # s to au
+
+    def evolve_pulse(self, pulse, steps=2000, dt=None):
+        """
+        """
+        self.ajust_unities()
+
+        # NOT SURE YET
+        self.dt_s = dt or 1.0e-18
+        self.dt_au = self.dt_s / self.au_t # s to au
+        
+        exp_v2 = np.exp(- 0.5j * self.v_au * self.dt_au)
+        exp_t = np.exp(- 0.5j * \
+            (2 * np.pi * self.k_au) ** 2 * self.dt_au / self.m_eff)
+        
+        evolve_once = lambda psi: exp_v2 * ifft(exp_t * fft(exp_v2 * psi))
+
+        import matplotlib.pyplot as plt
+        import matplotlib.animation as animation
+        fig, ax = plt.subplots()
+        x = self.x_nm
+        line, = ax.plot(x, pulse)
+
+        def animate(i):
+            for i in range(100):
+                pulse = evolve_once(pulse)
+            line.set_ydata(pulse)
+            return line,
+
+        def init():
+            line.set_ydata(np.ma.array(x, mask=True))
+            return line,
+
+        ani = animation.FuncAnimation(fig, animate, np.arange(1, 200), init_func=init, interval=25, blit=True)
+        plt.show()
+
+        # pulse /= np.sqrt(simps(pulse * np.conjugate(pulse), self.x_au))
+        return pulse
+
 
 class FiniteQuantumWell(GenericPotential):
     """

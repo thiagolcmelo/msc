@@ -60,6 +60,21 @@ class GenericPotential(object):
             'm_eff': self.m_eff
         }
 
+    def eigen_value(self, psi):
+        """ calculate eigenvalue for a eigenstate given the current
+        calculations potential, masses, and so on"""
+        second_derivative = np.asarray(psi[0:-2]-2*psi[1:-1]+psi[2:]) \
+            /self.dx_au**2
+        psi = psi[1:-1]
+        psi_st = np.conjugate(psi)
+        
+        me = np.asarray(self.m_eff[1:-1])
+        
+        h_p_h = simps(psi_st * (-0.5 * second_derivative / me + \
+            self.v_au[1:-1] * psi), self.x_au[1:-1])
+        h_p_h /= simps(psi_st * psi, self.x_au[1:-1])
+        return h_p_h.real * self.au2ev
+
     def generate_eigenfunctions(self, n=3, steps=2000, dt=None):
         """
         ### Generating eigenvalues and eigenfunctions
@@ -103,20 +118,6 @@ class GenericPotential(object):
         exp_v2 = np.exp(- 0.5 * self.v_au * self.dt_au)
         exp_t = np.exp(- 0.5 * (2 * np.pi * self.k_au) ** 2 * self.dt_au / self.m_eff)
         
-        def eigen_value(psi):
-            """ calculate eigenvalue for a eigenstate given the current
-            calculations potential, masses, and so on"""
-            second_derivative = np.asarray(psi[0:-2]-2*psi[1:-1]+psi[2:]) \
-                /self.dx_au**2
-            psi = psi[1:-1]
-            psi_st = np.conjugate(psi)
-            
-            me = np.asarray(self.m_eff[1:-1])
-            
-            h_p_h = simps(psi_st * (-0.5 * second_derivative / me + \
-                self.v_au[1:-1] * psi), self.x_au[1:-1])
-            return h_p_h.real * self.au2ev
-        
         evolve_once = lambda psi: exp_v2 * ifft(exp_t * fft(exp_v2 * psi))
 
         for s in range(n):
@@ -134,7 +135,7 @@ class GenericPotential(object):
                 states[s] /= np.sqrt(simps(states[s] * np.conjugate(states[s]), self.x_au))
 
                 if t % 10 == 0:
-                    ev = eigen_value(states[s])
+                    ev = self.eigen_value(states[s])
                     print('t = %d, E_%d: %.6f meV' % (t, s, 1000*ev))
                     #errors = errors[1:] + [ev]
                     #if np.std(errors) < 1e-9:
@@ -142,7 +143,7 @@ class GenericPotential(object):
                 
         for s in range(n):
             # calculate eigenvalue
-            values[s] = eigen_value(states[s])
+            values[s] = self.eigen_value(states[s])
 
         return {
             'eigenstates': states,
@@ -165,10 +166,9 @@ class GenericPotential(object):
         self.dt_s = 1.0e-18
         self.dt_au = self.dt_s / self.au_t # s to au
 
-    def evolve_pulse(self, pulse, steps=2000, dt=None):
+    def evolve_pulse(self, steps=2000, dt=None):
         """
         """
-        self.ajust_unities()
 
         # NOT SURE YET
         self.dt_s = dt or 1.0e-18
@@ -178,30 +178,58 @@ class GenericPotential(object):
         exp_t = np.exp(- 0.5j * \
             (2 * np.pi * self.k_au) ** 2 * self.dt_au / self.m_eff)
         
+        #import matplotlib.pyplot as plt
+        #plt.plot(self.x_nm, self.pulse*np.conjugate(self.pulse))
+        #plt.show()
         evolve_once = lambda psi: exp_v2 * ifft(exp_t * fft(exp_v2 * psi))
-
         import matplotlib.pyplot as plt
         import matplotlib.animation as animation
         fig, ax = plt.subplots()
-        x = self.x_nm
-        line, = ax.plot(x, pulse)
+        ax.plot(self.x_nm, self.v_ev)
+
+        pulse_height = np.ptp(self.v_ev) / 5
+
+        print(self.eigen_value(self.pulse))
+        visual_pulse = lambda p: pulse_height * p*p.conjugate() / np.ptp(p*p.conjugate()) + self.eigen_value(p)
+        line, = ax.plot(self.x_nm, visual_pulse(self.pulse))
 
         def animate(i):
             for i in range(100):
-                pulse = evolve_once(pulse)
-            line.set_ydata(pulse)
+                self.pulse = evolve_once(self.pulse)
+            line.set_ydata(visual_pulse(self.pulse))
             return line,
-
         def init():
-            line.set_ydata(np.ma.array(x, mask=True))
+            line.set_ydata(np.ma.array(self.x_nm, mask=True))
             return line,
-
         ani = animation.FuncAnimation(fig, animate, np.arange(1, 200), init_func=init, interval=25, blit=True)
         plt.show()
 
-        # pulse /= np.sqrt(simps(pulse * np.conjugate(pulse), self.x_au))
-        return pulse
+        # self.pulse /= np.sqrt(simps(self.pulse * np.conjugate(self.pulse), self.x_au))
+        return self.pulse
 
+    def gaussian_pulse(self, delta_x, x0, E, direction='L2R'):
+        assert self.x_nm[0] < x0 < self.x_nm[-1]
+        assert delta_x < np.ptp(self.x_nm)
+        assert direction in ['L2R', 'R2L']
+
+        self.pulse_E_ev = E
+        self.pulse_E_au = E * self.ev / self.au_e
+        self.pulse_x0_nm = x0 * 1e-9
+        self.pulse_x0_au = x0 * 1e-9 / self.au_l
+        self.pulse_x0_index = np.searchsorted(self.x_au, self.pulse_x0_au)
+        self.pulse_delta_x_nm = delta_x * 1e-9
+        self.pulse_delta_x_au = delta_x * 1e-9 / self.au_l
+        self.pulse_x0_meff = self.m_eff[self.pulse_x0_index]
+        self.pulse_k0_au = np.sqrt(2.0 * self.pulse_x0_meff * self.pulse_E_au)
+        self.pulse_k0_au *= 1.0 if direction == 'L2R' else -1.0
+        
+        self.wave_amp = (2.0 * np.pi * self.pulse_delta_x_au ** 2) ** (0.25)
+        pulse = lambda x: self.wave_amp * \
+            np.exp((1j) * self.pulse_k0_au * x - \
+            (x - self.pulse_x0_au) ** 2 / (4.0 * self.pulse_delta_x_au ** 2))
+        pulse = np.vectorize(pulse)
+        self.pulse = pulse(self.x_au)
+        return self.pulse
 
 class FiniteQuantumWell(GenericPotential):
     """
@@ -218,13 +246,13 @@ class FiniteQuantumWell(GenericPotential):
         self.wl = wl
         self.wh = wh
 
-        self.surround_times = 150 # half on each side
-        self.system_length_nm = (self.surround_times + 1) * wl
+        self.surround_times = 75 # on each side
+        self.system_length_nm = (2*self.surround_times + 1) * wl
         self.x_nm = np.linspace(-self.system_length_nm/2,\
             self.system_length_nm/2, self.N)
 
         self.pts = lambda l: int(l * float(self.N) / self.system_length_nm)
-        self.bulk_length_nm = (self.surround_times/2)*self.wl
+        self.bulk_length_nm = (self.surround_times)*self.wl
 
         # bulk
         self.v_ev = self.pts(self.bulk_length_nm) * [wh]
@@ -272,10 +300,10 @@ class BarriersWellSandwich(GenericPotential):
         self.valence_pct = 0.4
 
         self.core_length_nm = 2*b_l+2*d_l+w_l
-        self.surround_times = 2 # use a even number
+        self.surround_times = 2 # on each side
 
-        self.system_length_nm = (self.surround_times + 1)*self.core_length_nm
-        self.bulk_length_nm = (self.surround_times/2)*self.core_length_nm
+        self.system_length_nm = (2*self.surround_times + 1)*self.core_length_nm
+        self.bulk_length_nm = (self.surround_times)*self.core_length_nm
 
         # weird rule
         # 20 A -> 128 pts
@@ -344,6 +372,8 @@ class BarriersWellSandwich(GenericPotential):
         # use numpy arrays
         self.m_eff = np.asarray(self.m_eff)
 
+        self.ajust_unities()
+
 class MultiQuantumWell(GenericPotential):
     """
 
@@ -402,24 +432,21 @@ if __name__ == '__main__':
     #system_properties = GenericPotential()
     #system_properties = MultiQuantumWell(w_n=2, total_length=150.0)
     #system_properties = FiniteQuantumWell(wh=25.0, wl=0.5)
+    
     system_properties = BarriersWellSandwich(5.0, 4.0, 5.0, 0.4, 0.2, 0.0)
     potential_shape = system_properties.get_potential_shape()
     
+    #x = potential_shape['x']
+    #x0 = x[0]+np.ptp(x)*0.3
+    #delta_x = np.ptp(x) * 0.01
+    #pulse = system_properties.gaussian_pulse(delta_x=delta_x, x0=x0, E=0.03918626)
+    #system_properties.evolve_pulse(pulse)
+    
     import matplotlib.pyplot as plt
-    plt.scatter(potential_shape['x'], potential_shape['potential'], linestyle=":")
-    #plt.plot(potential_shape['x'], potential_shape['m_eff'])
+    plt.plot(potential_shape['x'], potential_shape['potential'])
+    plt.plot(potential_shape['x'], potential_shape['m_eff'])
     result = system_properties.generate_eigenfunctions(3, steps=20000)
     for i, p in enumerate(result['eigenstates']):
-        plt.scatter(potential_shape['x'], (p*np.conjugate(p)).real+result['eigenvalues'][i])
+        plt.plot(potential_shape['x'], (p*np.conjugate(p)).real+result['eigenvalues'][i])
     print(result['eigenvalues'])
     plt.show()
-
-    #for dt in [1e-16, 5e-17, 1e-17, 5e-18]:
-    #    for N in 2**np.asarray(range(12,20)):
-    #        for steps in [2000, 5000, 10000, 20000]:
-    #            system_properties = BarriersWellSandwich(5.0, 9.0, 8.2, 0.4, 0.3, 0.0, N=N)
-    #            result = system_properties.generate_eigenfunctions(2, steps=steps, dt=dt)
-    #            eigenvalues = result['eigenvalues']
-    #            print('N=%d, steps=%d, dt=%.1e s, e0=%.6f meV, e1=%.6f meV' % (N, steps, dt, 1000*eigenvalues[0], 1000*eigenvalues[1]))
-
-                

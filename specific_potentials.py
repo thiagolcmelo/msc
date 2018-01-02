@@ -4,6 +4,8 @@
 this module contains some common potentials shapes, as well as properties
 of heterostructures that fit such potentials
 """
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
 import numpy as np
 from scipy.integrate import simps
 import scipy.constants as cte
@@ -45,6 +47,11 @@ class GenericPotential(object):
         self.v_ev = self.v_j / self.ev
         self.m_eff = np.ones(self.x_nm.size)
 
+        # very useful
+        self.absolute2 = np.vectorize(lambda x: np.absolute(x)**2)
+        self.self_inner_prod = lambda f,x: simps(self.absolute2(f), x)
+
+
     def get_potential_shape(self):
         """
         return the potential shape in eV and nm in an dict like:
@@ -75,7 +82,14 @@ class GenericPotential(object):
         h_p_h /= simps(psi_st * psi, self.x_au[1:-1])
         return h_p_h.real * self.au2ev
 
-    def generate_eigenfunctions(self, n=3, steps=2000, dt=None):
+    def wave_energy(self, psi):
+        energy = 0.0
+        for value, state in zip(self.values, self.states):
+            an = simps(state.conjugate()*psi, self.x_au)/simps(state.conjugate()*state, self.x_au)
+            energy += (an.conjugate()*an)*value
+        return energy
+
+    def generate_eigenfunctions(self, n=3, steps=2000, dt=None, verbose=False):
         """
         ### Generating eigenvalues and eigenfunctions
         this will generate `n` first eigenfunctions (and eigenvalues)
@@ -104,14 +118,14 @@ class GenericPotential(object):
         self.dt_au = self.dt_s / self.au_t # s to au
 
         # creates numpy arrays for hold the calculated values
-        states = np.zeros((n, self.N), dtype=np.complex_)
-        values = np.zeros(n, dtype=np.complex_)
+        self.states = np.zeros((n, self.N), dtype=np.complex_)
+        self.values = np.zeros(n, dtype=np.complex_)
 
         # create kickstart states
         # they consist of legendre polinomials modulated by a gaussian
         short_grid = np.linspace(-1, 1, self.N)
         g = gaussian(self.N, std=int(self.N/100))
-        states = np.asarray([g * sp.legendre(i)(short_grid) for i in range(n)],\
+        self.states = np.asarray([g * sp.legendre(i)(short_grid) for i in range(n)],\
              dtype=np.complex_)
 
         # evolve in imaginary time
@@ -121,33 +135,30 @@ class GenericPotential(object):
         evolve_once = lambda psi: exp_v2 * ifft(exp_t * fft(exp_v2 * psi))
 
         for s in range(n):
-            errors = np.ones(10)
             for t in range(steps):
                 # evolve once
-                states[s] = evolve_once(states[s])
+                self.states[s] = evolve_once(self.states[s])
 
                 # gram-shimdt
                 for m in range(s):
-                    proj = simps(states[s] * np.conjugate(states[m]), self.x_au)
-                    states[s] -= proj * states[m]
+                    proj = simps(self.states[s] * np.conjugate(self.states[m]), self.x_au)
+                    self.states[s] -= proj * self.states[m]
 
                 # normalize
-                states[s] /= np.sqrt(simps(states[s] * np.conjugate(states[s]), self.x_au))
+                self.states[s] /= np.sqrt(simps(self.states[s] * np.conjugate(self.states[s]), self.x_au))
+                self.states[s] /= np.sqrt(simps(np.absolute(self.states[s]) ** 2, self.x_au))
 
-                if t % 10 == 0:
-                    ev = self.eigen_value(states[s])
-                    print('t = %d, E_%d: %.6f meV' % (t, s, 1000*ev))
-                    #errors = errors[1:] + [ev]
-                    #if np.std(errors) < 1e-9:
-                    #    break
-                
-        for s in range(n):
-            # calculate eigenvalue
-            values[s] = self.eigen_value(states[s])
+                #if t % 10 == 0:
+                #    ev = self.eigen_value(states[s])
+                #    print('t = %d, E_%d: %.6f meV' % (t, s, 1000*ev))
+            
+            self.values[s] = self.eigen_value(self.states[s])
+            if verbose:
+                print("E_%d = %.10f eV" % (s, self.values[s]))
 
         return {
-            'eigenstates': states,
-            'eigenvalues': values
+            'eigenstates': self.states,
+            'eigenvalues': self.values
         }
 
     def ajust_unities(self):
@@ -166,10 +177,9 @@ class GenericPotential(object):
         self.dt_s = 1.0e-18
         self.dt_au = self.dt_s / self.au_t # s to au
 
-    def evolve_pulse(self, steps=2000, dt=None):
+    def evolve_pulse(self, steps=2000, dt=None, display=True):
         """
         """
-
         # NOT SURE YET
         self.dt_s = dt or 1.0e-18
         self.dt_au = self.dt_s / self.au_t # s to au
@@ -178,39 +188,66 @@ class GenericPotential(object):
         exp_t = np.exp(- 0.5j * \
             (2 * np.pi * self.k_au) ** 2 * self.dt_au / self.m_eff)
         
-        #import matplotlib.pyplot as plt
-        #plt.plot(self.x_nm, self.pulse*np.conjugate(self.pulse))
-        #plt.show()
         evolve_once = lambda psi: exp_v2 * ifft(exp_t * fft(exp_v2 * psi))
-        import matplotlib.pyplot as plt
-        import matplotlib.animation as animation
-        fig, ax = plt.subplots()
-        
-        ax.plot(self.x_nm, self.v_ev)
-        ax.plot(self.x_nm, self.v_au_abs.imag * self.au2ev)
+        self.max_trans = 0.0
+        total = simps(self.pulse*self.pulse.conjugate(), self.x_au)
+        real_energy = self.wave_energy(self.pulse)
 
-        print(self.eigen_value(self.pulse))
-        #pulse_height = np.ptp(self.v_ev) / 5
-        #visual_pulse = lambda p: pulse_height * p*p.conjugate() / np.ptp(p*p.conjugate()) + self.eigen_value(p)
-        visual_pulse = lambda p: p*p.conjugate()
-        line, = ax.plot(self.x_nm, visual_pulse(self.pulse))
-        energy_text = ax.text(0.02, 0.90, '', transform=ax.transAxes)
+        if display: 
+            fig, ax = plt.subplots()
+            
+            ax.plot(self.x_nm, self.v_ev)
+            ax.plot(self.x_nm, self.v_au_abs.imag * self.au2ev)
 
-        def animate(i):
-            for i in range(100):
+            pulse_height = np.ptp(self.v_ev) / 5
+            start_norm = np.ptp(self.pulse*self.pulse.conjugate())
+            fake_e0 = self.eigen_value(self.pulse)
+
+            visual_pulse = lambda p: pulse_height * p*p.conjugate() / start_norm + fake_e0
+            #visual_pulse = lambda p: p*p.conjugate()
+            line, = ax.plot(self.x_nm, visual_pulse(self.pulse))
+            energy_text = ax.text(0.02, 0.90, '', transform=ax.transAxes)
+            time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes)
+            
+            max_trans_text = ax.text(0.02, 0.05, '', transform=ax.transAxes)
+            trans_text = ax.text(0.02, 0.10, '', transform=ax.transAxes)
+            refle_text = ax.text(0.02, 0.15, '', transform=ax.transAxes)
+
+            def animate(i):
+                for _ in range(100):
+                    self.pulse = evolve_once(self.pulse)
+                line.set_ydata(visual_pulse(self.pulse))
+                energy_text.set_text("A = %.6f" % (simps(self.pulse * np.conjugate(self.pulse), self.x_au)))
+                time_text.set_text("t = %.6e sec" % (self.dt_s * float(i)))
+                
+                hn = int(self.N/2)
+                refle = simps(self.pulse[:hn]*self.pulse.conjugate()[:hn], self.x_au[:hn])/total
+                trans = simps(self.pulse[hn:]*self.pulse.conjugate()[hn:], self.x_au[hn:])/total
+                self.max_trans = max(self.max_trans, trans)
+
+                max_trans_text.set_text("max trans: %.6f %%" % (self.max_trans))
+                trans_text.set_text("trans: %.6f %%" % (trans))
+                refle_text.set_text("refle: %.6f %%" % (refle))
+
+                return line, energy_text, time_text, refle_text, trans_text, max_trans_text
+
+            def init():
+                line.set_ydata(np.ma.array(self.x_nm, mask=True))
+                return line,
+            ani = animation.FuncAnimation(fig, animate, np.arange(1, 200), init_func=init, interval=25, blit=True)
+            plt.show()
+
+            # self.pulse /= np.sqrt(simps(self.pulse * np.conjugate(self.pulse), self.x_au))
+
+        else:
+            hn = int(self.N/2)
+            total = simps(self.pulse*self.pulse.conjugate(), self.x_au)
+            for _ in range(steps):
                 self.pulse = evolve_once(self.pulse)
-            line.set_ydata(visual_pulse(self.pulse))
-            energy_text.set_text("A = %.6f" % (simps(self.pulse * np.conjugate(self.pulse), self.x_au)))
-            return line, energy_text
+                trans = simps(self.pulse[hn:]*self.pulse.conjugate()[hn:], self.x_au[hn:])/total
+                self.max_trans = max(self.max_trans, trans)
 
-        def init():
-            line.set_ydata(np.ma.array(self.x_nm, mask=True))
-            return line,
-        ani = animation.FuncAnimation(fig, animate, np.arange(1, 200), init_func=init, interval=25, blit=True)
-        plt.show()
-
-        # self.pulse /= np.sqrt(simps(self.pulse * np.conjugate(self.pulse), self.x_au))
-        return self.pulse
+        return (self.pulse, self.max_trans, real_energy)
 
     def gaussian_pulse(self, delta_x, x0, E, direction='L2R'):
         assert self.x_nm[0] < x0 < self.x_nm[-1]
@@ -450,13 +487,17 @@ if __name__ == '__main__':
     #system_properties = FiniteQuantumWell(wh=25.0, wl=0.5)
     
     system_properties = BarriersWellSandwich(5.0, 4.0, 5.0, 0.4, 0.2, 0.0)
+    result = system_properties.generate_eigenfunctions(3, steps=20000, verbose=True)
     potential_shape = system_properties.get_potential_shape()
     
     x = potential_shape['x']
     x0 = x[0]+np.ptp(x)*0.3
     delta_x = np.ptp(x) * 0.01
-    pulse = system_properties.gaussian_pulse(delta_x=delta_x, x0=x0, E=0.01)
-    system_properties.evolve_pulse(pulse)
+
+    for energy in np.linspace(0.2, 0.5, 100):
+        pulse = system_properties.gaussian_pulse(delta_x=delta_x, x0=x0, E=energy)
+        pulse, trans, real_energy = system_properties.evolve_pulse(display=False, steps=20000)
+        print("Kn: %.6f eV, trans: %.6f %%, En: %.6f eV" % (energy, trans, real_energy))
     
     #import matplotlib.pyplot as plt
     #plt.plot(potential_shape['x'], potential_shape['potential'])

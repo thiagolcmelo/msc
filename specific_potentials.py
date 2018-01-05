@@ -61,7 +61,6 @@ class GenericPotential(object):
         self.absolute2 = np.vectorize(lambda x: np.absolute(x)**2)
         self.self_inner_prod = lambda f,x: simps(self.absolute2(f), x)
 
-
     def get_potential_shape(self):
         """
         return the potential shape in eV and nm in an dict like:
@@ -101,14 +100,6 @@ class GenericPotential(object):
 
     def generate_eigenfunctions(self, n=3, steps=2000, dt=None, verbose=False):
         """
-        ### Generating eigenvalues and eigenfunctions
-        this will generate `n` first eigenfunctions (and eigenvalues)
-
-        Args:
-
-        `n` (int) number of eigenfunctions to be calculated
-
-        `steps` (int) is the number of time evolutions per state
         """
 
         # translate properties to atomic unities
@@ -194,8 +185,7 @@ class GenericPotential(object):
         self.dt_s = dt or 1.0e-18
         self.dt_au = self.dt_s / self.au_t # s to au
         
-        #exp_v2 = np.exp(- 0.5j * (self.v_au + self.v_au_abs) * self.dt_au)
-        exp_v2 = np.exp(- 0.5j * (np.zeros(self.N) + self.v_au_abs) * self.dt_au)
+        exp_v2 = np.exp(- 0.5j * (self.v_au + self.v_au_abs) * self.dt_au)
         exp_t = np.exp(- 0.5j * \
             (2 * np.pi * self.k_au) ** 2 * self.dt_au / self.m_eff)
         
@@ -209,8 +199,8 @@ class GenericPotential(object):
         if display: 
             fig, ax = plt.subplots()
             
-            #ax.plot(self.x_nm, self.v_ev)
-            #ax.plot(self.x_nm, self.v_au_abs.imag * self.au2ev)
+            ax.plot(self.x_nm, self.v_ev)
+            ax.plot(self.x_nm, self.v_au_abs.imag * self.au2ev)
 
             pulse_height = np.ptp(self.v_ev) / 5
             start_norm = np.ptp(self.pulse*self.pulse.conjugate())
@@ -219,23 +209,25 @@ class GenericPotential(object):
             visual_pulse = lambda p: pulse_height * p*p.conjugate() / start_norm + 0.05#fake_e0
             #visual_pulse = lambda p: p*p.conjugate()
             line, = ax.plot(self.x_nm, visual_pulse(self.pulse))
-            energy_text = ax.text(0.03, 0.90, '', transform=ax.transAxes)
+            #a_text = ax.text(0.03, 0.90, '', transform=ax.transAxes)
             time_text = ax.text(0.03, 0.95, '', transform=ax.transAxes)
 
             ax.grid(True)
+            ax.set_xlabel('$x (nm)$')
+            ax.set_ylabel('$E (eV)$')
             
             max_trans_text = ax.text(0.02, 0.05, '', transform=ax.transAxes)
             trans_text = ax.text(0.02, 0.10, '', transform=ax.transAxes)
             refle_text = ax.text(0.02, 0.15, '', transform=ax.transAxes)
             bound_text = ax.text(0.02, 0.20, '', transform=ax.transAxes)
-            e_text = ax.text(0.02, 0.90, '', transform=ax.transAxes)
-            e_text.set_text("energy: %.3f eV" % (self.pulse_E_ev))
+            energy_text = ax.text(0.02, 0.90, '', transform=ax.transAxes)
+            energy_text.set_text("energy: %.3f eV" % (self.pulse_E_ev))
 
             def animate(i):
                 for _ in range(100):
                     self.pulse = evolve_once(self.pulse)
                 line.set_ydata(visual_pulse(self.pulse))
-                energy_text.set_text("A = %.6f" % (simps(self.pulse * np.conjugate(self.pulse), self.x_au)))
+                #energy_text.set_text("A = %.6f" % (simps(self.pulse * np.conjugate(self.pulse), self.x_au)))
                 time_text.set_text("t = %.3e sec" % (self.dt_s * float(i)))
                 
                 self.refle = (simps(self.pulse[:pb]*self.pulse.conjugate()[:pb], self.x_au[:pb])/total).real
@@ -243,12 +235,12 @@ class GenericPotential(object):
                 self.bound = (simps(self.pulse[pb:pa]*self.pulse.conjugate()[pb:pa], self.x_au[pb:pa])/total).real
                 self.max_trans = max(self.max_trans, self.trans)
 
-                max_trans_text.set_text("max trans: %.6f %%" % (self.max_trans))
-                trans_text.set_text("trans: %.6f %%" % (self.trans))
-                refle_text.set_text("refle: %.6f %%" % (self.refle))
-                bound_text.set_text("bound: %.6f %%" % (self.bound))
+                max_trans_text.set_text("max trans: %.6f %%" % (100*self.max_trans))
+                trans_text.set_text("trans: %.6f %%" % (100*self.trans))
+                refle_text.set_text("refle: %.6f %%" % (100*self.refle))
+                bound_text.set_text("bound: %.6f %%" % (100*self.bound))
 
-                return line,time_text#, energy_text, time_text, refle_text, trans_text, max_trans_text, bound_text
+                return line,energy_text, time_text, refle_text, trans_text, max_trans_text, bound_text
 
             def init():
                 line.set_ydata(np.ma.array(self.x_nm, mask=True))
@@ -285,13 +277,18 @@ class GenericPotential(object):
 
         self.pulse_x0_index = np.searchsorted(self.x_au, self.pulse_x0_au)
         
-        self.pulse_delta_x_nm = delta_x * 1e-9
-        self.pulse_delta_x_au = delta_x * 1e-9 / self.au_l
-
         self.pulse_x0_meff = self.m_eff[self.pulse_x0_index]
         
         self.pulse_k0_au = np.sqrt(2.0 * self.pulse_x0_meff * self.pulse_E_au)
         self.pulse_k0_au *= 1.0 if direction == 'L2R' else -1.0
+
+        delta_e_au = 0.001 / self.au2ev
+        delta_k_au = np.sqrt(2.0 * delta_e_au * self.pulse_x0_meff)
+        delta_x_au = 0.5 / delta_k_au # uncertainty principle
+        
+        #self.pulse_delta_x_nm = delta_x * 1e-9
+        #self.pulse_delta_x_au = delta_x * 1e-9 / self.au_l
+        self.pulse_delta_x_au = delta_x_au
         
         self.wave_amp = (2.0 * np.pi * self.pulse_delta_x_au ** 2) ** (0.25)
         self.pulse_func = lambda x: self.wave_amp * \
@@ -304,11 +301,60 @@ class GenericPotential(object):
         a5 = 1.12 * self.pulse_E_au
         #abs_pts = int(self.N / 15)
         v_abs = np.vectorize(lambda y: -1j*a5*(13.22*np.exp(-2.0/y)))
-        self.v_au_abs = v_abs(np.linspace(1e-9, 1, self.hN))
-        self.v_au_abs = np.append(self.v_au_abs[::-1], self.v_au_abs)
-        self.v_au_abs = np.zeros(self.N)
 
+        qN = int(self.hN/8)
+        self.v_au_abs = v_abs(np.linspace(1e-9, 1, qN))
+        self.v_au_abs = np.append(np.append(self.v_au_abs[::-1], np.zeros(self.hN + 6*qN)), self.v_au_abs)
+        #self.v_au_abs = v_abs(np.linspace(1e-9, 1, self.hN))
+        #self.v_au_abs = np.append(self.v_au_abs[::-1], self.v_au_abs)
+        #self.v_au_abs = np.zeros(self.N)
         return self.pulse
+
+    def photocurrent(self, energy, T=1e-12, Fdyn=5.0, dt=None):
+        self.energy_ex_ev = energy
+        self.energy_ex_au = energy /  self.au2ev
+        self.T = T
+        self.T_au = T / self.au_t
+
+        self.dt_s = dt or 1.0e-17
+        self.dt_au = self.dt_s / self.au_t # s to au
+
+        # KV/cm
+        self.Fdyn_v_cm = Fdyn * 1000.0
+        self.Fdyn_v_m = 100.0 * self.Fdyn_v_cm
+        self.Fdyn_j_m = self.Fdyn_v_m * self.q
+        self.Fdyn_j = np.vectorize(lambda z: (self.x_m[0] - z) * self.Fdyn_j_m)(self.x_m)
+        self.Fdyn_ev = self.Fdyn_j / self.ev
+        self.Fdyn_au = self.Fdyn_ev / self.au2ev
+        
+        self.omega_au = self.energy_ex_au / self.hbar_au
+        exp_t = np.exp(- 0.5j * (2 * np.pi * self.k_au) ** 2 * self.dt_au / self.m_eff)
+
+        self.PSI = self.states[0]
+
+        ###################################
+        a5 = 1.12 * self.values[0] / self.au2ev
+        #abs_pts = int(self.N / 15)
+        v_abs = np.vectorize(lambda y: -1j*a5*(13.22*np.exp(-2.0/y)))
+        qN = int(self.hN/8)
+        self.v_au_abs = v_abs(np.linspace(1e-9, 1, qN))
+        self.v_au_abs = np.append(np.append(self.v_au_abs[::-1], np.zeros(self.hN + 6*qN)), self.v_au_abs)
+
+        self.j_t = []
+        self.t_grid_au = np.linspace(0.0, self.T_au, int(self.T_au / self.dt_au))
+        
+        for i, t_au in enumerate(self.t_grid_au):
+            exp_v2 = np.exp(- 0.5j * (self.v_au + self.v_au_abs + self.Fdyn_au * np.sin(self.omega_au*t_au)) * self.dt_au)
+            evolve_once = lambda psi: exp_v2 * ifft(exp_t * fft(exp_v2 * psi))
+            self.PSI = evolve_once(self.PSI)
+            pb = self.points_before - 100
+            pa = self.points_after + 100
+            j_l = ((1.0/(1.0j * self.m_eff[pb])) * self.PSI[pb].conjugate() * (self.PSI[pb+1]-self.PSI[pb-1]) / (2*self.dx_au)).real
+            j_r = ((1.0/(1.0j * self.m_eff[pa])) * self.PSI[pa].conjugate() * (self.PSI[pa+1]-self.PSI[pa-1]) / (2*self.dx_au)).real
+            self.j_t.append(j_r-j_l)
+            #if i % 1000 == 0:
+            #    print(i)
+        return self.q * simps(self.j_t, self.t_grid_au) / self.T_au
 
 class FiniteQuantumWell(GenericPotential):
     """
@@ -347,6 +393,8 @@ class FiniteQuantumWell(GenericPotential):
         self.v_ev = np.array(self.v_ev)
         self.m_eff = np.array(self.m_eff)
 
+        self.ajust_unities()
+
 class BarriersWellSandwich(GenericPotential):
     """
     this class calculate properties for a potential such a quantum well
@@ -356,7 +404,7 @@ class BarriersWellSandwich(GenericPotential):
     it does not use segragation, so in practice, it fits only AlGaAs
     requirements
     """
-    def __init__(self, b_l, d_l, w_l, b_x, d_x, w_x, N=None, vbias=0.0):
+    def __init__(self, b_l, d_l, w_l, b_x, d_x, w_x, N=None, Fst=0.0, surround=2):
         """
         Args:
         :b_l (float) is the barrier length in nanometers
@@ -379,7 +427,7 @@ class BarriersWellSandwich(GenericPotential):
         self.valence_pct = 0.4
 
         self.core_length_nm = 2*b_l+2*d_l+w_l
-        self.surround_times = 2 # on each side
+        self.surround_times = surround # on each side
 
         self.system_length_nm = (2*self.surround_times + 1)*self.core_length_nm
         self.bulk_length_nm = (self.surround_times)*self.core_length_nm
@@ -456,26 +504,26 @@ class BarriersWellSandwich(GenericPotential):
         self.ajust_unities()
 
         # apply the bias
-        if vbias != 0.0:
+        if Fst != 0.0:
             # KV/cm
-            self.vbias_v_cm = vbias * 1000.0
-            self.vbias_v_m = 100.0 * self.vbias_v_cm
-            self.vbias_j_m = self.vbias_v_m * self.q
+            self.Fst_v_cm = Fst * 1000.0
+            self.Fst_v_m = 100.0 * self.Fst_v_cm
+            self.Fst_j_m = self.Fst_v_m * self.q
 
-            def vbias_shape(z):
-                i = np.searchsorted(self.x_m, z)
-                if i < self.points_before:
-                    return 0.0
-                elif self.points_before < i < self.points_after:
-                    return (self.x_m[self.points_before] - z) * self.vbias_j_m
-                else:
-                    return -self.x_m[self.points_after] * self.vbias_j_m
+            #def Fst_shape(z):
+            #    i = np.searchsorted(self.x_m, z)
+            #    if i < self.points_before:
+            #        return 0.0
+            #    elif self.points_before < i < self.points_after:
+            #        return (self.x_m[self.points_before] - z) * self.Fst_j_m
+            #    else:
+            #        return -self.x_m[self.points_after] * self.Fst_j_m
+
+            self.Fst_j = np.vectorize(lambda z: (self.x_m[0] - z) * self.Fst_j_m)(self.x_m)
             
-            self.vbias_j = np.vectorize(vbias_shape)(self.x_m)
-            
-            self.vbias_ev = self.vbias_j / self.ev
-            self.vbias_au = self.vbias_ev / self.au2ev
-            self.v_ev += self.vbias_ev
+            self.Fst_ev = self.Fst_j / self.ev
+            self.Fst_au = self.Fst_ev / self.au2ev
+            self.v_ev += self.Fst_ev
 
             self.ajust_unities()
 
@@ -524,6 +572,146 @@ class MultiQuantumWell(GenericPotential):
         self.x_nm = np.linspace(-self.system_length_nm/2, \
             self.system_length_nm/2, self.N)
 
+class DoubleBarrier(GenericPotential):
+    def __init__(self, b_l, w_l, b_h, w_h, N=None, Fst=0.0, surround=1):
+        super(DoubleBarrier,self).__init__()
+
+        self.b_l_nm = b_l
+        self.w_l_nm = w_l
+        self.b_h_ev = b_h
+        self.w_h_ev = w_h
+
+        self.core_length_nm = 2*b_l+w_l
+        self.surround_times = surround # on each side
+
+        self.system_length_nm = (2*self.surround_times + 1)*self.core_length_nm
+        self.bulk_length_nm = (self.surround_times)*self.core_length_nm
+
+        # this function return the number of points for a given length in nm
+        self.pts = lambda l: int(l * float(self.N) / self.system_length_nm)
+
+        self.x_nm = np.linspace(-self.system_length_nm/2, \
+            self.system_length_nm/2, self.N)
+        
+        meff = 0.067
+
+        # bulk
+        self.v_ev = self.pts(self.bulk_length_nm) * [self.w_h_ev]
+        self.m_eff = self.pts(self.bulk_length_nm) * [meff]
+        self.points_before = len(self.v_ev)
+        # first barrier
+        self.v_ev += self.pts(b_l) * [self.b_h_ev]
+        self.m_eff += self.pts(b_l) * [meff]
+        # well
+        self.v_ev += self.pts(w_l) * [self.w_h_ev]
+        self.m_eff += self.pts(w_l) * [meff]
+        # second barrier
+        self.v_ev += self.pts(b_l) * [self.b_h_ev]
+        self.m_eff += self.pts(b_l) * [meff]
+        self.points_after = len(self.v_ev)
+        # span after second barrier
+        self.v_ev += (self.N-len(self.v_ev)) * [self.w_h_ev]
+        self.m_eff += (self.N-len(self.m_eff)) * [meff]
+
+        # smooth the potential
+        smooth_frac = int(float(self.N) / 500.0)
+        self.v_ev = np.asarray([np.average(self.v_ev[max(0,i-smooth_frac):min(self.N-1,i+smooth_frac)]) for i in range(self.N)])
+
+        # use numpy arrays
+        self.m_eff = np.ones(self.N) * meff
+
+        self.ajust_unities()
+
+        # apply the bias
+        if Fst != 0.0:
+            # KV/cm
+            self.Fst_v_cm = Fst * 1000.0
+            self.Fst_v_m = 100.0 * self.Fst_v_cm
+            self.Fst_j_m = self.Fst_v_m * self.q
+
+            def Fst_shape(z):
+                i = np.searchsorted(self.x_m, z)
+                if i < self.points_before:
+                    return 0.0
+                elif self.points_before < i < self.points_after:
+                    return (self.x_m[self.points_before] - z) * self.Fst_j_m
+                else:
+                    return -self.x_m[self.points_after] * self.Fst_j_m
+            
+            self.Fst_j = np.vectorize(Fst_shape)(self.x_m)
+            
+            self.Fst_ev = self.Fst_j / self.ev
+            self.Fst_au = self.Fst_ev / self.au2ev
+            self.v_ev += self.Fst_ev
+
+            self.ajust_unities()
+
+class QuantumWell(GenericPotential):
+    def __init__(self, w_l, b_h, w_h, N=None, Fst=0.0, surround=1):
+        super(QuantumWell,self).__init__()
+
+        self.w_l_nm = w_l
+        self.b_h_ev = b_h
+        self.w_h_ev = w_h
+
+        self.core_length_nm = w_l
+        self.surround_times = surround # on each side
+
+        self.system_length_nm = (2*self.surround_times + 1)*self.core_length_nm
+        self.bulk_length_nm = (self.surround_times)*self.core_length_nm
+
+        # this function return the number of points for a given length in nm
+        self.pts = lambda l: int(l * float(self.N) / self.system_length_nm)
+
+        self.x_nm = np.linspace(-self.system_length_nm/2, \
+            self.system_length_nm/2, self.N)
+        
+        meff = 0.067
+
+        # bulk
+        self.v_ev = self.pts(self.bulk_length_nm) * [self.b_h_ev]
+        self.m_eff = self.pts(self.bulk_length_nm) * [meff]
+        self.points_before = len(self.v_ev)
+        # well
+        self.v_ev += self.pts(w_l) * [self.w_h_ev]
+        self.m_eff += self.pts(w_l) * [meff]
+        # span after second barrier
+        self.v_ev += (self.N-len(self.v_ev)) * [self.b_h_ev]
+        self.m_eff += (self.N-len(self.m_eff)) * [meff]
+
+        # smooth the potential
+        smooth_frac = int(float(self.N) / 500.0)
+        self.v_ev = np.asarray([np.average(self.v_ev[max(0,i-smooth_frac):min(self.N-1,i+smooth_frac)]) for i in range(self.N)])
+
+        # use numpy arrays
+        self.m_eff = np.ones(self.N) * meff
+
+        self.ajust_unities()
+
+        # apply the bias
+        if Fst != 0.0:
+            # KV/cm
+            self.Fst_v_cm = Fst * 1000.0
+            self.Fst_v_m = 100.0 * self.Fst_v_cm
+            self.Fst_j_m = self.Fst_v_m * self.q
+
+            def Fst_shape(z):
+                i = np.searchsorted(self.x_m, z)
+                if i < self.points_before:
+                    return 0.0
+                elif self.points_before < i < self.points_after:
+                    return (self.x_m[self.points_before] - z) * self.Fst_j_m
+                else:
+                    return -self.x_m[self.points_after] * self.Fst_j_m
+            
+            self.Fst_j = np.vectorize(Fst_shape)(self.x_m)
+            
+            self.Fst_ev = self.Fst_j / self.ev
+            self.Fst_au = self.Fst_ev / self.au2ev
+            self.v_ev += self.Fst_ev
+
+            self.ajust_unities()
+
 if __name__ == '__main__':
     #import numpy as np
     #import scipy.constants as cte
@@ -538,14 +726,51 @@ if __name__ == '__main__':
     #system_properties = MultiQuantumWell(w_n=2, total_length=150.0)
     #system_properties = FiniteQuantumWell(wh=25.0, wl=0.5)
     
-    system_properties = BarriersWellSandwich(5.0, 4.0, 5.0, 0.4, 0.2, 0.0, vbias=20.0)
-    potential_shape = system_properties.get_potential_shape()
-
+    system_properties = BarriersWellSandwich(5.0, 4.0, 5.0, 0.4, 0.2, 0.0, Fst=0.0)
+    #system_properties = DoubleBarrier(12., 10.0, 0.3, 0.0, Fst=0.0)
+    #system_properties = QuantumWell(12.5, 1.6, 0.0, Fst=0.0, surround=2)
+    #system_properties = BarriersWellSandwich(1.7, 0.0, 4.5, 1.0, 0.0, 0.0, Fst=0.0, surround=1)
+    
+    #################### EIGENSTATES ###########################################
+    #result = system_properties.generate_eigenfunctions(1, steps=20000, verbose=True)
+    #print(result['eigenvalues'])
     files = np.load('eigenfunctions/BarriersWellSandwich.npz')
     system_properties.states = files['arr_0']
     system_properties.values = np.zeros(system_properties.states.size, dtype=np.complex_)
     for i, state in enumerate(system_properties.states):
         system_properties.values[i] = system_properties.eigen_value(state)
+    #################### EIGENSTATES ###########################################
+
+    #################### PHOTOCURRENT ##########################################
+    energies = np.linspace(0.1, 0.4, 100)
+    photocurrent = []
+    def get_pc(energy):
+        pc = system_properties.photocurrent(energy=0.145, dt=5e-17)
+        #photocurrent.append(pc)
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print("[%s] > Energy: %.6f eV, PC: %.6e " % (now, energy, pc))
+        return pc
+    
+    pool = Pool(processes=4)
+    photocurrent = pool.map(get_pc, energies)
+    plt.plot(energies, photocurrent)
+    plt.show()
+    np.savez('eigenfunctions/BarriersWellSandwichPhotoCurrent', photocurrent)
+    #################### PHOTOCURRENT ##########################################
+
+    #################### POTENTIAL SHAPE #######################################
+    potential_shape = system_properties.get_potential_shape()
+    #plt.plot(potential_shape['x'], potential_shape['potential'])
+    #plt.show()
+    #################### POTENTIAL SHAPE #######################################
+    
+    
+
+    #files = np.load('eigenfunctions/BarriersWellSandwich.npz')
+    #system_properties.states = files['arr_0']
+    #system_properties.values = np.zeros(system_properties.states.size, dtype=np.complex_)
+    #for i, state in enumerate(system_properties.states):
+    #    system_properties.values[i] = system_properties.eigen_value(state)
     
     #wave = 2*system_properties.states[0] + system_properties.states[1]
     #print(system_properties.wave_energy(wave))
@@ -555,18 +780,31 @@ if __name__ == '__main__':
     #np.savez('eigenfunctions/BarriersWellSandwich', result['eigenstates'])
     #np.savez('eigenfunctions/BarriersWellSandwich', system_properties.states[0:3])
     
-    x = potential_shape['x']
-    x0 = x[0]+np.ptp(x)*0.5
-    delta_x = np.ptp(x) * 0.01
-    
-    transmission = []
-    #energies = np.linspace(0.03, 0.05, 20)
-    energies = np.linspace(100, 200, 20)
+    ################ EVOLVE VISUAL #############################################
+    #x = potential_shape['x']
+    #x0 = x[0]+np.ptp(x)*0.3
+    #delta_x = np.ptp(x) * 0.01
+    #transmission = []
+    #energies = np.linspace(0.0, 0.1, 20)
+    #for energy in energies:
+    #    pulse = system_properties.gaussian_pulse(delta_x=delta_x, x0=x0, E=energy)
+    #    pulse, trans, bound = system_properties.evolve_pulse(display=True, steps=2000, dt=1e-17)
+    ################ EVOLVE VISUAL #############################################
 
-    for energy in energies:
-        pulse = system_properties.gaussian_pulse(delta_x=delta_x, x0=x0, E=energy)
-        pulse, trans, bound = system_properties.evolve_pulse(display=True, steps=2000)
-
+    ################ PULSE ANALYSIS ############################################
+    #x = potential_shape['x']
+    #x0 = x[0]+np.ptp(x)*0.3
+    #delta_x = np.ptp(x) * 0.01
+    #transmission = []
+    #energies = np.linspace(0.0, 0.1, 20)
+    #for energy in energies:
+    #    pulse = system_properties.gaussian_pulse(delta_x=delta_x, x0=x0, E=energy)
+    #    pk = fft(pulse)
+    #    x_au = system_properties.x_au
+    #    k_au = fftfreq(system_properties.N, d=(x_au[1]-x_au[0]))
+    #    plt.plot(k_au, np.absolute(pk)**2)
+    #    plt.show()
+    ################ PULSE ANALYSIS ############################################
 
     #for energy in energies:
     #def evolve_all(energy):

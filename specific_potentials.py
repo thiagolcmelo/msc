@@ -4,6 +4,7 @@
 this module contains some common potentials shapes, as well as properties
 of heterostructures that fit such potentials
 """
+
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import numpy as np
@@ -22,17 +23,43 @@ from band_structure_database import Alloy, Database
 
 class GenericPotential(object):
     """
-    
+    This class provides tools for calculating the properties of systems
+    based on their potentials
+
+    It is possible to calculate:
+    - eigenvalues and eigenfunctions
+    - evolve waves in time under potential influence
+    - calculate properties like photocurrent, transmission, reflextion
+
+    The default potential is a Quantum Harmoic Oscillator for a wave length
+    of 8.1 µm
+
+    The inputs must always be in:
+    - Energy: `eV`
+    - Length: `nm`
+    - Time: `s`
     """
 
-    def __init__(self, N=None):
+    def __init__(self, N=8192):
+        """
+        Parameters
+        ----------
+        N : int
+            the number of grid points, it should be a power of 2
+
+        Examples
+        --------
+        >>> from specific_potentials import GenericPotential
+        >>> generic = GenericPotential(1024)
+        """
+
         # default grid size
-        self.N = N or 8192
-        self.hN = int(self.N/2)
+        self.N = N
+        self.hN = int(self.N/2) # half grid
         self.points_before = int(self.N/2)
         self.points_after = int(self.N/2)
 
-        # atomic unities
+        # useful atomic unities
         self.au_l = cte.value('atomic unit of length')
         self.au_t = cte.value('atomic unit of time')
         self.au_e = cte.value('atomic unit of energy')
@@ -57,17 +84,25 @@ class GenericPotential(object):
         self.v_ev = self.v_j / self.ev
         self.m_eff = np.ones(self.x_nm.size)
 
-        # very useful
-        self.absolute2 = np.vectorize(lambda x: np.absolute(x)**2)
-        self.self_inner_prod = lambda f,x: simps(self.absolute2(f), x)
-
     def get_potential_shape(self):
         """
-        return the potential shape in eV and nm in an dict like:
+        It return not only the potential, but also the spatial grid and the
+        effective masses along it
+
+        Returns
+        -------
+        potential_info : dict
+            the information about potential, spatial grid and effective masses
+
+        Examples
+        --------
+        >>> from specific_potentials import GenericPotential
+        >>> generic = GenericPotential(1024)
+        >>> generic.get_potential_shape()
         {
-            'potential': [...],
-            'x': [...],
-            'm_eff': [...],
+            'potential': [...], # in eV
+            'x': [...], # in nm
+            'm_eff': [...], # no units
         }
         """
         return {
@@ -75,23 +110,49 @@ class GenericPotential(object):
             'x': self.x_nm,
             'm_eff': self.m_eff
         }
+    
+    def _eigen_value(self, psi):
+        """ 
+        **Only** for eigenfunctions of the object's potential
 
-    def eigen_value(self, psi):
-        """ calculate eigenvalue for a eigenstate given the current
-        calculations potential, masses, and so on"""
+        Patameters
+        ----------
+        psi : array_like
+            the eigenfunction for calculating the eigenvalue
+
+        Returns
+        -------
+        eigenvalue : float
+            the eigenvalue corresponding to the given eigenfunction
+        """
         second_derivative = np.asarray(psi[0:-2]-2*psi[1:-1]+psi[2:]) \
             /self.dx_au**2
         psi = psi[1:-1]
         psi_st = np.conjugate(psi)
-        
         me = np.asarray(self.m_eff[1:-1])
-        
         h_p_h = simps(psi_st * (-0.5 * second_derivative / me + \
             self.v_au[1:-1] * psi), self.x_au[1:-1])
         h_p_h /= simps(psi_st * psi, self.x_au[1:-1])
         return h_p_h.real * self.au2ev
 
     def wave_energy(self, psi):
+        """
+        Calculates the energy of an arbitrary wave in the system
+        it depends on how many eigenvalues/eigenfunctions are already calculated
+        since it is going to be a superposition
+
+        Parameters
+        ----------
+        psi : array_like
+            an arbitrary wave, fitting the system's size (number of points) and
+            corresponding to its spatial grid
+
+        Returns
+        -------
+        energ : float
+            the energy of the given wave in the current system
+
+        """
         energy = 0.0
         for value, state in zip(self.values, self.states):
             an = simps(state.conjugate()*psi, self.x_au)/simps(state.conjugate()*state, self.x_au)
@@ -100,6 +161,7 @@ class GenericPotential(object):
 
     def generate_eigenfunctions(self, n=3, steps=2000, dt=None, verbose=False):
         """
+        
         """
 
         # translate properties to atomic unities
@@ -150,10 +212,10 @@ class GenericPotential(object):
                 self.states[s] /= np.sqrt(simps(np.absolute(self.states[s]) ** 2, self.x_au))
 
                 if verbose and t % 100 == 0:
-                    ev = self.eigen_value(self.states[s])
+                    ev = self._eigen_value(self.states[s])
                     print('t = %d, E_%d: %.10f meV' % (t, s, 1000*ev))
             
-            self.values[s] = self.eigen_value(self.states[s])
+            self.values[s] = self._eigen_value(self.states[s])
             if verbose:
                 print("E_%d = %.10f eV" % (s, self.values[s]))
 
@@ -330,7 +392,7 @@ class GenericPotential(object):
         self.omega_au = self.energy_ex_au / self.hbar_au
         exp_t = np.exp(- 0.5j * (2 * np.pi * self.k_au) ** 2 * self.dt_au / self.m_eff)
 
-        self.PSI = self.states[0]
+        self.PSI = self.states[1]
 
         ###################################
         a5 = 1.12 * self.values[0] / self.au2ev
@@ -734,13 +796,13 @@ if __name__ == '__main__':
     #system_properties = MultiQuantumWell(w_n=2, total_length=150.0)
     #system_properties = FiniteQuantumWell(wh=25.0, wl=0.5)
     
-    system_properties = BarriersWellSandwich(5.0, 3.2, 7.0, 0.4, 0.2, 0.0, Fst=0.0)
+    system_properties = BarriersWellSandwich(5.0, 4.0, 5.0, 0.4, 0.2, 0.0, Fst=0.0)
     #system_properties = DoubleBarrier(12., 10.0, 0.3, 0.0, Fst=0.0)
     #system_properties = QuantumWell(12.5, 1.6, 0.0, Fst=0.0, surround=2)
     #system_properties = BarriersWellSandwich(1.7, 0.0, 4.5, 1.0, 0.0, 0.0, Fst=0.0, surround=1)
     
     #################### EIGENSTATES ###########################################
-    if False:
+    if True:
         result = system_properties.generate_eigenfunctions(3, steps=30000, verbose=True)
         np.savez('eigenfunctions/BarriersWellSandwichFstFdyn0', result['eigenstates'])
         print(result['eigenvalues'])
@@ -749,12 +811,12 @@ if __name__ == '__main__':
         system_properties.states = files['arr_0']
         system_properties.values = np.zeros(system_properties.states.size, dtype=np.complex_)
         for i, state in enumerate(system_properties.states):
-            system_properties.values[i] = system_properties.eigen_value(state)
+            system_properties.values[i] = system_properties._eigen_value(state)
     #################### EIGENSTATES ###########################################
 
     #################### PHOTOCURRENT ##########################################
     #pc = system_properties.photocurrent(energy=0.145, dt=5e-17)
-    energies = np.linspace(0.1, 0.4, 100)
+    energies = np.linspace(0.1, 0.4, 300)
     photocurrent = []
     def get_pc(energy):
         pc = system_properties.photocurrent(energy=energy, dt=5e-17, Fdyn=5.0)
@@ -782,7 +844,7 @@ if __name__ == '__main__':
     #system_properties.states = files['arr_0']
     #system_properties.values = np.zeros(system_properties.states.size, dtype=np.complex_)
     #for i, state in enumerate(system_properties.states):
-    #    system_properties.values[i] = system_properties.eigen_value(state)
+    #    system_properties.values[i] = system_properties._eigen_value(state)
     
     #wave = 2*system_properties.states[0] + system_properties.states[1]
     #print(system_properties.wave_energy(wave))

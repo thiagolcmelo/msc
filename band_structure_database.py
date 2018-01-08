@@ -8,7 +8,19 @@ and a database with alloys properties
 from enum import Enum
 
 class Alloy(Enum):
-    """ this enum is used for making dealing with the database """
+    """
+    An enum for labeling some alloys of interest
+    
+    Alloys under support currently are:
+    - GaAs
+    - AlAs
+    - InAs
+    - InP
+    - GaP
+    - AlGaAs
+    - InGaAs
+    - AlInAs
+    """
     GaAs = 1
     AlAs = 2
     InAs = 3
@@ -20,7 +32,7 @@ class Alloy(Enum):
 
 class Database:
     """
-    this class provides parameters, deformation, and effective masses
+    This class provides parameters, deformation, and effective masses
     for some selected alloys, it is currently based on:
 
     Chuang, S. L. (1995). Physics of optoelectronic devices. New York: Wiley.
@@ -29,14 +41,28 @@ class Database:
 
     def __init__(self, alloy, concentration=1.0):
         """
-        Args:
+        An instance of this class represents a single alloy, which must be
+        informed in this constructor
 
-        :alloy (Allow)
-        :concentration (float) is the 'x' concentration used in ternary alloys
+        Parameters
+        ----------
+        alloy : Alloy
+            the alloy which the instance is going to represent
+        concentration : float
+            some alloys have characteristic ratios between components, they
+            are usually pointed as `x`
+
+        Examples
+        --------
+        >>> from band_structure_database import Alloy, Database
+        >>> algaas_03 = Database(Alloy.AlGaAs, 0.3)
+        >>> print("Gap at 0K - %.2f eV" % algaas_03.parameters('eg_0'))
+        Gap at 0K - 2.00 eV
         """
         self.alloy = alloy
         self.concentration = concentration
 
+        # this is the default (currently the only one) source
         self.chuang_db = {
             Alloy.GaAs: {
                 'parameters': {
@@ -205,6 +231,7 @@ class Database:
             },
         }
 
+        # specify a dummy order for some known ternary alloys
         self.ternary_order = {
             Alloy.AlGaAs: (Alloy.AlAs, Alloy.GaAs),
             Alloy.InGaAs: (Alloy.GaAs, Alloy.InAs),
@@ -231,23 +258,108 @@ class Database:
 
     def alloy_property(self, property_type, property_name):
         """
-        this is just a shortcut for accessing:
+        this is just a shortcut for accessing the database
 
-        :property_name { eg_0, a_c, ... }
-        :property_type { parameters, deformation_potentials, effective_masses }
+        Parameters
+        ----------
+        property_type : string
+            the property type as in the database, possible values are:
+            - `parameters`
+            - `deformation_potentials`
+            - `effective_masses`
+        property_name : string
+            the property name as in the database, example values are:
+            - `eg_0`
+            - `a_c`
 
-        from the database
+        Returns
+        -------
+        property : float
+            the value of the property
+
+        Examples
+        --------
+        >>> from band_structure_database import Alloy, Database
+        >>> algaas_03 = Database(Alloy.AlGaAs, 0.3)
+        >>> gap = algaas_03.alloy_property('parameters', 'eg_0')
+        >>> print("Gap at 0K - %.2f eV" % gap)
+        Gap at 0K - 2.00 eV
         """
         return self.chuang_db[self.alloy][property_type][property_name]
 
     def parameters(self, parameter_name):
-        """ shortcut for parameters """
+        """
+        this is just a shortcut for using `alloy_property` method above
+
+        Parameters
+        ----------
+        property_name : string
+            the property name as in the database, example values are:
+            - `eg_0`
+            - `eg_300`
+
+        Returns
+        -------
+        property : float
+            the value of the parameter
+
+        Examples
+        --------
+        >>> from band_structure_database import Alloy, Database
+        >>> algaas_03 = Database(Alloy.AlGaAs, 0.3)
+        >>> print("Gap at 0K - %.2f eV" % algaas_03.parameters('eg_0'))
+        Gap at 0K - 2.00 eV
+        """
         return self.alloy_property('parameters', parameter_name)
 
     def deformation_potentials(self, parameter_name):
-        """ shortcut for deformation potentials """
+        """
+        this is just a shortcut for using `alloy_property` method above
+
+        Parameters
+        ----------
+        property_name : string
+            the property name as in the database, example values are:
+            - `a_c`
+            - `a_v`
+
+        Returns
+        -------
+        property : float
+            the value of the deformation parameters
+
+        Examples
+        --------
+        >>> from band_structure_database import Alloy, Database
+        >>> algaas_03 = Database(Alloy.AlGaAs, 0.3)
+        >>> a_v = algaas_03.deformation_potentials('a_v')
+        >>> print("Valence defformation potencial - %.2f eV" % a_v)
+        Valence defformation potencial - 1.55 eV
+        """
         return self.alloy_property('deformation_potentials', parameter_name)
 
     def effective_masses(self, parameter_name):
-        """ shortcut for effective masses """
+        """
+        this is just a shortcut for using `alloy_property` method above
+
+        Parameters
+        ----------
+        property_name : string
+            the property name as in the database, example values are:
+            - `m_e`
+            - `m_hh`
+
+        Returns
+        -------
+        property : float
+            the value of the effective mass
+
+        Examples
+        --------
+        >>> from band_structure_database import Alloy, Database
+        >>> algaas_03 = Database(Alloy.AlGaAs, 0.3)
+        >>> m_e = algaas_03.effective_masses('m_e')
+        >>> print("Electron effective mass - %.3f" % m_e)
+        Electron effective mass - 0.092
+        """
         return self.alloy_property('effective_masses', parameter_name)

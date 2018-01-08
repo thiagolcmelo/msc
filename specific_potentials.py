@@ -310,7 +310,7 @@ class GenericPotential(object):
         #self.v_au_abs = np.zeros(self.N)
         return self.pulse
 
-    def photocurrent(self, energy, T=1e-12, Fdyn=5.0, dt=None):
+    def photocurrent(self, energy, T=1.0e-12, Fdyn=5.0, dt=None):
         self.energy_ex_ev = energy
         self.energy_ex_au = energy /  self.au2ev
         self.T = T
@@ -343,18 +343,26 @@ class GenericPotential(object):
         self.j_t = []
         self.t_grid_au = np.linspace(0.0, self.T_au, int(self.T_au / self.dt_au))
         
+        pb = self.points_before - 100
+        pa = self.points_after + 100
+
         for i, t_au in enumerate(self.t_grid_au):
-            exp_v2 = np.exp(- 0.5j * (self.v_au + self.v_au_abs + self.Fdyn_au * np.sin(self.omega_au*t_au)) * self.dt_au)
+            #exp_v2 = np.exp(- 0.5j * (self.v_au + self.v_au_abs + self.Fdyn_au * np.sin(self.omega_au*t_au)) * self.dt_au)
+            exp_v2 = np.exp(- 0.5j * (self.v_au + self.Fdyn_au * np.sin(self.omega_au*t_au)) * self.dt_au)
             evolve_once = lambda psi: exp_v2 * ifft(exp_t * fft(exp_v2 * psi))
             self.PSI = evolve_once(self.PSI)
-            pb = self.points_before - 100
-            pa = self.points_after + 100
-            j_l = ((1.0/(1.0j * self.m_eff[pb])) * self.PSI[pb].conjugate() * (self.PSI[pb+1]-self.PSI[pb-1]) / (2*self.dx_au)).real
-            j_r = ((1.0/(1.0j * self.m_eff[pa])) * self.PSI[pa].conjugate() * (self.PSI[pa+1]-self.PSI[pa-1]) / (2*self.dx_au)).real
+            
+            j_l = ((-0.5j/(self.m_eff[pb])) * (self.PSI[pb].conjugate() * (self.PSI[pb+1]-self.PSI[pb-1]) - self.PSI[pb] * (self.PSI[pb+1].conjugate()-self.PSI[pb-1].conjugate())) / (2*self.dx_au)).real
+            j_r = ((-0.5j/(self.m_eff[pa])) * (self.PSI[pa].conjugate() * (self.PSI[pa+1]-self.PSI[pa-1]) - self.PSI[pa] * (self.PSI[pa+1].conjugate()-self.PSI[pa-1].conjugate())) / (2*self.dx_au)).real
+
             self.j_t.append(j_r-j_l)
             #if i % 1000 == 0:
             #    print(i)
-        return self.q * simps(self.j_t, self.t_grid_au) / self.T_au
+        
+        #plt.plot(self.t_grid_au, self.j_t)
+        #plt.show()
+        #return self.q * simps(self.j_t, self.t_grid_au) / self.T_au
+        return simps(self.j_t, self.t_grid_au) / self.T_au
 
 class FiniteQuantumWell(GenericPotential):
     """
@@ -726,26 +734,30 @@ if __name__ == '__main__':
     #system_properties = MultiQuantumWell(w_n=2, total_length=150.0)
     #system_properties = FiniteQuantumWell(wh=25.0, wl=0.5)
     
-    system_properties = BarriersWellSandwich(5.0, 4.0, 5.0, 0.4, 0.2, 0.0, Fst=0.0)
+    system_properties = BarriersWellSandwich(5.0, 3.2, 7.0, 0.4, 0.2, 0.0, Fst=0.0)
     #system_properties = DoubleBarrier(12., 10.0, 0.3, 0.0, Fst=0.0)
     #system_properties = QuantumWell(12.5, 1.6, 0.0, Fst=0.0, surround=2)
     #system_properties = BarriersWellSandwich(1.7, 0.0, 4.5, 1.0, 0.0, 0.0, Fst=0.0, surround=1)
     
     #################### EIGENSTATES ###########################################
-    #result = system_properties.generate_eigenfunctions(1, steps=20000, verbose=True)
-    #print(result['eigenvalues'])
-    files = np.load('eigenfunctions/BarriersWellSandwich.npz')
-    system_properties.states = files['arr_0']
-    system_properties.values = np.zeros(system_properties.states.size, dtype=np.complex_)
-    for i, state in enumerate(system_properties.states):
-        system_properties.values[i] = system_properties.eigen_value(state)
+    if False:
+        result = system_properties.generate_eigenfunctions(3, steps=30000, verbose=True)
+        np.savez('eigenfunctions/BarriersWellSandwichFstFdyn0', result['eigenstates'])
+        print(result['eigenvalues'])
+    else:
+        files = np.load('eigenfunctions/BarriersWellSandwichFstFdyn0.npz')
+        system_properties.states = files['arr_0']
+        system_properties.values = np.zeros(system_properties.states.size, dtype=np.complex_)
+        for i, state in enumerate(system_properties.states):
+            system_properties.values[i] = system_properties.eigen_value(state)
     #################### EIGENSTATES ###########################################
 
     #################### PHOTOCURRENT ##########################################
+    #pc = system_properties.photocurrent(energy=0.145, dt=5e-17)
     energies = np.linspace(0.1, 0.4, 100)
     photocurrent = []
     def get_pc(energy):
-        pc = system_properties.photocurrent(energy=0.145, dt=5e-17)
+        pc = system_properties.photocurrent(energy=energy, dt=5e-17, Fdyn=5.0)
         #photocurrent.append(pc)
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print("[%s] > Energy: %.6f eV, PC: %.6e " % (now, energy, pc))
@@ -759,7 +771,7 @@ if __name__ == '__main__':
     #################### PHOTOCURRENT ##########################################
 
     #################### POTENTIAL SHAPE #######################################
-    potential_shape = system_properties.get_potential_shape()
+    #potential_shape = system_properties.get_potential_shape()
     #plt.plot(potential_shape['x'], potential_shape['potential'])
     #plt.show()
     #################### POTENTIAL SHAPE #######################################

@@ -14,12 +14,17 @@ import scipy.special as sp
 from scipy.signal import gaussian
 from scipy.fftpack import fft, ifft, fftfreq
 from datetime import datetime
+from types import *
 
 from multiprocessing import Pool, TimeoutError
 import time
 import os
 
 from band_structure_database import Alloy, Database
+
+
+# very default values
+DEFAULT_DT = 1e-18 # seconds
 
 class GenericPotential(object):
     """
@@ -84,6 +89,264 @@ class GenericPotential(object):
         self.v_ev = self.v_j / self.ev
         self.m_eff = np.ones(self.x_nm.size)
 
+        # set default time increment
+        self._set_dt()
+
+        # adjust grid
+        self._ajust_units()
+
+    # operations
+
+    def time_evolution(self, steps=2000, dt=None, imaginary=False, n=3):
+        """
+        This function will evolve the `system_waves` in time. It time is
+        `imaginary`, then it will try to calculate the `n` first eigenvalues
+        and eigenstates of the system.
+
+        Parameters
+        ----------
+        steps : integer
+            the number of time steps to evolve the system
+        dt : float
+            the increment in time in **seconds** for each step, the default is 
+            the system's default `dt` which is DEFAULT_DT
+        imaginary : boolean
+            *False* stands for not imaginary time evolution, while *True* stands
+            for the opposite
+        n : integer
+            the number of eigenvalues and eigenstates to be calculated in case
+            of imaginary time evolution, the edfault is `3`
+
+        Returns
+        -------
+        self : GenericPotential
+            the current GenericPotential object for further use in chain calls
+        """
+        assert not imaginary or n > 0
+        assert imaginary or self.system_waves
+        
+        self._set_dt(dt)
+        self._ajust_units()
+
+        img = 1.0 if imaginary else 1.0j
+        exp_v2 = lambda t: np.exp(- 0.5 * img * self.v_au_full(t) * self.dt_au)
+        exp_t = np.exp(- 0.5 * (2 * np.pi * self.k_au) ** 2 * self.dt_au \
+            / self.m_eff)
+        evolve_once = lambda psi, t: \
+            exp_v2(t) * ifft(exp_t * fft(exp_v2(t) * psi))
+        
+        if imaginary:
+            # creates numpy arrays for hold the calculated values
+            self.states = np.zeros((n, self.N), dtype=np.complex_)
+            self.values = np.zeros(n, dtype=np.complex_)
+
+            # create kickstart states
+            # they consist of legendre polinomials modulated by a gaussian
+            short_grid = np.linspace(-1, 1, self.N)
+            g = gaussian(self.N, std=int(self.N/100))
+            self.states = np.array([g * sp.legendre(i)(short_grid) \
+                for i in range(n)],dtype=np.complex_)
+
+            for s in range(n):
+                for t in range(steps):
+                    self.states[s] = evolve_once(self.states[s], float(t))
+
+                    # gram-shimdt
+                    for m in range(s):
+                        proj = simps(self.states[s] * \
+                            np.conjugate(self.states[m]), self.x_au)
+                        self.states[s] -= proj * self.states[m]
+
+                    # normalize
+                    self.states[s] /= np.sqrt(simps(self.states[s] * \
+                        np.conjugate(self.states[s]), self.x_au))
+                    self.states[s] /= \
+                        np.sqrt(simps(np.absolute(self.states[s]) ** 2, \
+                        self.x_au))
+
+                self.values[s] = self._eigen_value(self.states[s])
+        else:
+            for t in range(steps):
+                for s in range(len(self.working_waves)):
+                    self.working_waves[s] = \
+                        evolve_once(self.working_waves[s], float(t))
+
+        return self
+
+    def turn_bias_on(self, bias, core_only=False):
+        """
+        this function applies a static bias accross the system, the `bias` must
+        be given in KV/cm, God knows why...
+
+        if the `core_only` is true, the bias is not applied to the span that
+        surrounds the system under study
+
+        Parameters
+        ----------
+        bias : float
+            the bias in KV/cm
+        core_only : boolean
+            whether to apply the bias in the whole system or only in the
+            core under study and not in the span/bulk area
+
+        Returns
+        -------
+        self : GenericPotential
+            the current GenericPotential object for further use in chain calls
+        """
+        self.bias_v_cm = bias * 1000.0
+        self.bias_v_m = 100.0 * self.bias_v_cm
+        self.bias_j_m = self.bias_v_m * self.q
+
+        if core_only:
+            def bias_shape(z):
+                i = np.searchsorted(self.x_m, z)
+                if i < self.points_before:
+                    return 0.0
+                elif self.points_before < i < self.points_after:
+                    return (self.x_m[self.points_before] - z) * self.bias_j_m
+                else:
+                    return -self.x_m[self.points_after] * self.bias_j_m
+            self.bias_j = np.vectorize(bias_shape)(self.x_m)
+        else:
+            self.bias_j = np.vectorize(lambda z: \
+                (self.x_m[0] - z) * self.bias_j_m)(self.x_m)
+        
+        self.bias_ev = self.bias_j / self.ev
+        self.bias_au = self.bias_ev / self.au2ev
+        self._ajust_units()
+        return self
+
+    def turn_bias_off(self):
+        """
+        this function removes the bias previously applied if any...
+
+        Returns
+        -------
+        self : GenericPotential
+            the current GenericPotential object for further use in chain calls
+        """
+        self.bias_au = None
+        self._ajust_units()
+        return self
+
+    def turn_dyn_on(self, ep_dyn, w_len=8.1e-6, f=None, E=None, core_only=False):
+        """
+        this function applies a sine wave like an electric field to the system
+
+        if the `core_only` is true, the bias is not applied to the span that
+        surrounds the system under study
+
+        Parameters
+        ----------
+        ep_dyn : float
+            the electric potential in KV/cm
+        w_len : float
+            the electric field wave length in meters
+        f : float
+            the electric field frequency in Hz
+        E : float
+            the wave's energy in eV where it is going to be used `E = hbar * w`
+        core_only : boolean
+            whether to apply the bias in the whole system or only in the
+            core under study and not in the span/bulk area
+
+        Returns
+        -------
+        self : GenericPotential
+            the current GenericPotential object for further use in chain calls
+        """
+        # KV/cm
+        self.ep_dyn_v_cm = ep_dyn * 1000.0
+        self.ep_dyn_v_m = 100.0 * self.ep_dyn_v_cm
+        self.ep_dyn_j_m = self.ep_dyn_v_m * self.q
+        self.ep_dyn_j = np.vectorize(lambda z: (self.x_m[0] - z) * self.ep_dyn_j_m)(self.x_m)
+        self.ep_dyn_ev = self.ep_dyn_j / self.ev
+        self.ep_dyn_au = self.ep_dyn_ev / self.au2ev
+
+        if w_len:
+            f = self.c / w_len # Hz
+            self.omega_au = 2.0 * np.pi * (f * self.au_t)
+        elif f:
+            self.omega_au = 2.0 * np.pi * (f * self.au_t)
+        elif E:
+            self.omega_au = (E / self.au2ev) / self.hbar_au
+        
+        self.v_au_td = lambda t: self.ep_dyn_au * np.sin(self.omega_au * t)
+        self._ajust_units()
+        return self
+
+    def turn_dyn_off(self)
+        """
+        this function removes the radiation previously applied if any...
+
+        Returns
+        -------
+        self : GenericPotential
+            the current GenericPotential object for further use in chain calls
+        """
+        self.v_au_td = None
+        self._ajust_units()
+        return self
+
+    def work_on(self, n=0, indexes=None):
+        """
+        set some eigenfunction or some o them to the working waves
+
+        Parameters
+        ----------
+        n : integer
+            the index of some eigenfunction to be used as system wave
+        indexes : array_like
+            the indexes of some eigenfunctions to be used as system wave
+
+        Returns
+        -------
+        self : GenericPotential
+            the current GenericPotential object for further use in chain calls
+        """
+        if indexes:
+            self.working_waves = self.states.take(indexes)
+        else:
+            self.working_waves = np.array([np.copy(self.states[n])])
+        return self
+
+    # getters and setters
+
+    def get_eigenfunction(self, n):
+        """
+        return the nth eigenfunction of the system
+
+        Parameters
+        ----------
+        n : integer
+            the eigenfunction's index
+        
+        Returns
+        -------
+        eigenfunction : array_like
+            a complex array with the systems eigenfunction **corresponding** to
+            the system's length!!
+        """
+        return self.states[n]
+
+    def get_eigen_info(self, n):
+        """
+        return the nth (eigenfunction, eigenvalue) of the system
+
+        Parameters
+        ----------
+        n : integer
+            the eigenfunction's index
+        
+        Returns
+        -------
+        eigenfunction : tuple (array_like, float)
+            a complex array with the systems eigenfunction **corresponding** to
+            the system's length!! and the corresponding eigenvalue
+        """
+        return (self.states[n], self.values[n])
+
     def get_potential_shape(self):
         """
         It return not only the potential, but also the spatial grid and the
@@ -110,7 +373,22 @@ class GenericPotential(object):
             'x': self.x_nm,
             'm_eff': self.m_eff
         }
-    
+
+    # internals
+
+    def _set_dt(self, dt=None):
+        """
+        this function might be used for setting the default time increment
+        if *None* is given, then it will assume the value of `DEFAULT_DT`
+
+        Parameters
+        ----------
+        dt : float
+            the default time increment, in **seconds**
+        """
+        self.dt = dt or DEFAULT_DT
+        self.dt_au = self.dt / self.au_t
+
     def _eigen_value(self, psi):
         """ 
         **Only** for eigenfunctions of the object's potential
@@ -135,6 +413,35 @@ class GenericPotential(object):
         h_p_h /= simps(psi_st * psi, self.x_au[1:-1])
         return h_p_h.real * self.au2ev
 
+    def _ajust_units(self):
+        """
+        this must be called always that a change in the potential is made
+        because the interface to outside is always in eV, nm, s while
+        internally it works always with atomic units
+        """
+        self.x_m = self.x_nm * 1.0e-9 # nm to m
+        self.x_au = self.x_m / self.au_l # m to au
+        self.dx_au = self.x_au[1]-self.x_au[0] # dx
+        self.k_au = fftfreq(self.N, d=self.dx_au)
+
+        self.v_j = self.v_ev * self.ev # ev to j
+        self.v_au_ti = self.v_au = self.v_j / self.au_e # j to au
+
+        # check whether there is any bias to apply
+        try:
+            self.v_au_ti += self.bias_au
+        except:
+            pass
+
+        # check whether there is any dynamic field to apply
+        try:
+            assert self.v_au_td and isinstance(self.v_au_td, LambdaType)
+            self.v_au_full = lambda t: self.v_au_ti + self.v_au_td(t)
+        except:
+            self.v_au_full = lambda t: self.v_au_ti
+
+    # miscellaneous and legacy
+
     def wave_energy(self, psi):
         """
         Calculates the energy of an arbitrary wave in the system
@@ -151,11 +458,11 @@ class GenericPotential(object):
         -------
         energ : float
             the energy of the given wave in the current system
-
         """
         energy = 0.0
         for value, state in zip(self.values, self.states):
-            an = simps(state.conjugate()*psi, self.x_au)/simps(state.conjugate()*state, self.x_au)
+            an = simps(state.conjugate() * psi, self.x_au) / \
+                simps(state.conjugate() * state, self.x_au)
             energy += (an.conjugate()*an)*value
         return energy
 
@@ -163,22 +470,6 @@ class GenericPotential(object):
         """
         
         """
-
-        # translate properties to atomic unities
-        self.x_m = self.x_nm * 1.0e-9 # nm to m
-        self.x_au = self.x_m / self.au_l # m to au
-        self.dx_au = self.x_au[1]-self.x_au[0] # dx
-        
-        # k grid
-        self.k_au = fftfreq(self.N, d=self.dx_au)
-
-        # et >>> j >>> au
-        self.v_j = self.v_ev * self.ev # ev to j
-        self.v_au = self.v_j / self.au_e # j to au
-
-        # NOT SURE YET
-        self.dt_s = dt or 1.0e-18
-        self.dt_au = self.dt_s / self.au_t # s to au
 
         # creates numpy arrays for hold the calculated values
         self.states = np.zeros((n, self.N), dtype=np.complex_)
@@ -223,22 +514,6 @@ class GenericPotential(object):
             'eigenstates': self.states,
             'eigenvalues': self.values
         }
-
-    def ajust_unities(self):
-        # translate properties to atomic unities
-        self.x_m = self.x_nm * 1.0e-9 # nm to m
-        self.x_au = self.x_m / self.au_l # m to au
-        self.dx_au = self.x_au[1]-self.x_au[0] # dx
-        
-        self.v_j = self.v_ev * self.ev # ev to j
-        self.v_au = self.v_j / self.au_e # j to au
-
-        # k grid
-        self.k_au = fftfreq(self.N, d=self.dx_au)
-
-        # NOT SURE YET
-        self.dt_s = 1.0e-18
-        self.dt_au = self.dt_s / self.au_t # s to au
 
     def evolve_pulse(self, steps=2000, dt=None, display=True):
         """
@@ -372,7 +647,7 @@ class GenericPotential(object):
         #self.v_au_abs = np.zeros(self.N)
         return self.pulse
 
-    def photocurrent(self, energy, T=1.0e-12, Fdyn=5.0, dt=None):
+    def photocurrent(self, energy, T=1.0e-12, ep_dyn=5.0, dt=None):
         self.energy_ex_ev = energy
         self.energy_ex_au = energy /  self.au2ev
         self.T = T
@@ -382,12 +657,12 @@ class GenericPotential(object):
         self.dt_au = self.dt_s / self.au_t # s to au
 
         # KV/cm
-        self.Fdyn_v_cm = Fdyn * 1000.0
-        self.Fdyn_v_m = 100.0 * self.Fdyn_v_cm
-        self.Fdyn_j_m = self.Fdyn_v_m * self.q
-        self.Fdyn_j = np.vectorize(lambda z: (self.x_m[0] - z) * self.Fdyn_j_m)(self.x_m)
-        self.Fdyn_ev = self.Fdyn_j / self.ev
-        self.Fdyn_au = self.Fdyn_ev / self.au2ev
+        self.ep_dyn_v_cm = ep_dyn * 1000.0
+        self.ep_dyn_v_m = 100.0 * self.ep_dyn_v_cm
+        self.ep_dyn_j_m = self.ep_dyn_v_m * self.q
+        self.ep_dyn_j = np.vectorize(lambda z: (self.x_m[0] - z) * self.ep_dyn_j_m)(self.x_m)
+        self.ep_dyn_ev = self.ep_dyn_j / self.ev
+        self.ep_dyn_au = self.ep_dyn_ev / self.au2ev
         
         self.omega_au = self.energy_ex_au / self.hbar_au
         exp_t = np.exp(- 0.5j * (2 * np.pi * self.k_au) ** 2 * self.dt_au / self.m_eff)
@@ -409,8 +684,8 @@ class GenericPotential(object):
         pa = self.points_after + 100
 
         for i, t_au in enumerate(self.t_grid_au):
-            #exp_v2 = np.exp(- 0.5j * (self.v_au + self.v_au_abs + self.Fdyn_au * np.sin(self.omega_au*t_au)) * self.dt_au)
-            exp_v2 = np.exp(- 0.5j * (self.v_au + self.Fdyn_au * np.sin(self.omega_au*t_au)) * self.dt_au)
+            #exp_v2 = np.exp(- 0.5j * (self.v_au + self.v_au_abs + self.ep_dyn_au * np.sin(self.omega_au*t_au)) * self.dt_au)
+            exp_v2 = np.exp(- 0.5j * (self.v_au + self.ep_dyn_au * np.sin(self.omega_au*t_au)) * self.dt_au)
             evolve_once = lambda psi: exp_v2 * ifft(exp_t * fft(exp_v2 * psi))
             self.PSI = evolve_once(self.PSI)
             
@@ -463,7 +738,7 @@ class FiniteQuantumWell(GenericPotential):
         self.v_ev = np.array(self.v_ev)
         self.m_eff = np.array(self.m_eff)
 
-        self.ajust_unities()
+        self._ajust_units()
 
 class BarriersWellSandwich(GenericPotential):
     """
@@ -474,7 +749,7 @@ class BarriersWellSandwich(GenericPotential):
     it does not use segragation, so in practice, it fits only AlGaAs
     requirements
     """
-    def __init__(self, b_l, d_l, w_l, b_x, d_x, w_x, N=None, Fst=0.0, surround=2):
+    def __init__(self, b_l, d_l, w_l, b_x, d_x, w_x, N=None, bias=0.0, surround=2):
         """
         Args:
         :b_l (float) is the barrier length in nanometers
@@ -571,31 +846,31 @@ class BarriersWellSandwich(GenericPotential):
         # use numpy arrays
         self.m_eff = np.asarray(self.m_eff)
 
-        self.ajust_unities()
+        self._ajust_units()
 
         # apply the bias
-        if Fst != 0.0:
+        if bias != 0.0:
             # KV/cm
-            self.Fst_v_cm = Fst * 1000.0
-            self.Fst_v_m = 100.0 * self.Fst_v_cm
-            self.Fst_j_m = self.Fst_v_m * self.q
+            self.bias_v_cm = bias * 1000.0
+            self.bias_v_m = 100.0 * self.bias_v_cm
+            self.bias_j_m = self.bias_v_m * self.q
 
-            #def Fst_shape(z):
+            #def bias_shape(z):
             #    i = np.searchsorted(self.x_m, z)
             #    if i < self.points_before:
             #        return 0.0
             #    elif self.points_before < i < self.points_after:
-            #        return (self.x_m[self.points_before] - z) * self.Fst_j_m
+            #        return (self.x_m[self.points_before] - z) * self.bias_j_m
             #    else:
-            #        return -self.x_m[self.points_after] * self.Fst_j_m
+            #        return -self.x_m[self.points_after] * self.bias_j_m
 
-            self.Fst_j = np.vectorize(lambda z: (self.x_m[0] - z) * self.Fst_j_m)(self.x_m)
+            self.bias_j = np.vectorize(lambda z: (self.x_m[0] - z) * self.bias_j_m)(self.x_m)
             
-            self.Fst_ev = self.Fst_j / self.ev
-            self.Fst_au = self.Fst_ev / self.au2ev
-            self.v_ev += self.Fst_ev
+            self.bias_ev = self.bias_j / self.ev
+            self.bias_au = self.bias_ev / self.au2ev
+            self.v_ev += self.bias_ev
 
-            self.ajust_unities()
+            self._ajust_units()
 
 class MultiQuantumWell(GenericPotential):
     """
@@ -643,7 +918,7 @@ class MultiQuantumWell(GenericPotential):
             self.system_length_nm/2, self.N)
 
 class DoubleBarrier(GenericPotential):
-    def __init__(self, b_l, w_l, b_h, w_h, N=None, Fst=0.0, surround=1):
+    def __init__(self, b_l, w_l, b_h, w_h, N=None, bias=0.0, surround=1):
         super(DoubleBarrier,self).__init__()
 
         self.b_l_nm = b_l
@@ -690,34 +965,34 @@ class DoubleBarrier(GenericPotential):
         # use numpy arrays
         self.m_eff = np.ones(self.N) * meff
 
-        self.ajust_unities()
+        self._ajust_units()
 
         # apply the bias
-        if Fst != 0.0:
+        if bias != 0.0:
             # KV/cm
-            self.Fst_v_cm = Fst * 1000.0
-            self.Fst_v_m = 100.0 * self.Fst_v_cm
-            self.Fst_j_m = self.Fst_v_m * self.q
+            self.bias_v_cm = bias * 1000.0
+            self.bias_v_m = 100.0 * self.bias_v_cm
+            self.bias_j_m = self.bias_v_m * self.q
 
-            def Fst_shape(z):
+            def bias_shape(z):
                 i = np.searchsorted(self.x_m, z)
                 if i < self.points_before:
                     return 0.0
                 elif self.points_before < i < self.points_after:
-                    return (self.x_m[self.points_before] - z) * self.Fst_j_m
+                    return (self.x_m[self.points_before] - z) * self.bias_j_m
                 else:
-                    return -self.x_m[self.points_after] * self.Fst_j_m
+                    return -self.x_m[self.points_after] * self.bias_j_m
             
-            self.Fst_j = np.vectorize(Fst_shape)(self.x_m)
+            self.bias_j = np.vectorize(bias_shape)(self.x_m)
             
-            self.Fst_ev = self.Fst_j / self.ev
-            self.Fst_au = self.Fst_ev / self.au2ev
-            self.v_ev += self.Fst_ev
+            self.bias_ev = self.bias_j / self.ev
+            self.bias_au = self.bias_ev / self.au2ev
+            self.v_ev += self.bias_ev
 
-            self.ajust_unities()
+            self._ajust_units()
 
 class QuantumWell(GenericPotential):
-    def __init__(self, w_l, b_h, w_h, N=None, Fst=0.0, surround=1):
+    def __init__(self, w_l, b_h, w_h, N=None, bias=0.0, surround=1):
         super(QuantumWell,self).__init__()
 
         self.w_l_nm = w_l
@@ -756,31 +1031,31 @@ class QuantumWell(GenericPotential):
         # use numpy arrays
         self.m_eff = np.ones(self.N) * meff
 
-        self.ajust_unities()
+        self._ajust_units()
 
         # apply the bias
-        if Fst != 0.0:
+        if bias != 0.0:
             # KV/cm
-            self.Fst_v_cm = Fst * 1000.0
-            self.Fst_v_m = 100.0 * self.Fst_v_cm
-            self.Fst_j_m = self.Fst_v_m * self.q
+            self.bias_v_cm = bias * 1000.0
+            self.bias_v_m = 100.0 * self.bias_v_cm
+            self.bias_j_m = self.bias_v_m * self.q
 
-            def Fst_shape(z):
+            def bias_shape(z):
                 i = np.searchsorted(self.x_m, z)
                 if i < self.points_before:
                     return 0.0
                 elif self.points_before < i < self.points_after:
-                    return (self.x_m[self.points_before] - z) * self.Fst_j_m
+                    return (self.x_m[self.points_before] - z) * self.bias_j_m
                 else:
-                    return -self.x_m[self.points_after] * self.Fst_j_m
+                    return -self.x_m[self.points_after] * self.bias_j_m
             
-            self.Fst_j = np.vectorize(Fst_shape)(self.x_m)
+            self.bias_j = np.vectorize(bias_shape)(self.x_m)
             
-            self.Fst_ev = self.Fst_j / self.ev
-            self.Fst_au = self.Fst_ev / self.au2ev
-            self.v_ev += self.Fst_ev
+            self.bias_ev = self.bias_j / self.ev
+            self.bias_au = self.bias_ev / self.au2ev
+            self.v_ev += self.bias_ev
 
-            self.ajust_unities()
+            self._ajust_units()
 
 if __name__ == '__main__':
     #import numpy as np
@@ -796,40 +1071,47 @@ if __name__ == '__main__':
     #system_properties = MultiQuantumWell(w_n=2, total_length=150.0)
     #system_properties = FiniteQuantumWell(wh=25.0, wl=0.5)
     
-    system_properties = BarriersWellSandwich(5.0, 4.0, 5.0, 0.4, 0.2, 0.0, Fst=0.0)
-    #system_properties = DoubleBarrier(12., 10.0, 0.3, 0.0, Fst=0.0)
-    #system_properties = QuantumWell(12.5, 1.6, 0.0, Fst=0.0, surround=2)
-    #system_properties = BarriersWellSandwich(1.7, 0.0, 4.5, 1.0, 0.0, 0.0, Fst=0.0, surround=1)
+    system_properties = BarriersWellSandwich(5.0, 4.0, 5.0, 0.4, 0.2, 0.0, bias=0.0)
+    #system_properties = DoubleBarrier(12., 10.0, 0.3, 0.0, bias=0.0)
+    #system_properties = QuantumWell(12.5, 1.6, 0.0, bias=0.0, surround=2)
+    #system_properties = BarriersWellSandwich(1.7, 0.0, 4.5, 1.0, 0.0, 0.0, bias=0.0, surround=1)
     
     #################### EIGENSTATES ###########################################
-    if True:
-        result = system_properties.generate_eigenfunctions(3, steps=30000, verbose=True)
-        np.savez('eigenfunctions/BarriersWellSandwichFstFdyn0', result['eigenstates'])
-        print(result['eigenvalues'])
-    else:
-        files = np.load('eigenfunctions/BarriersWellSandwichFstFdyn0.npz')
-        system_properties.states = files['arr_0']
-        system_properties.values = np.zeros(system_properties.states.size, dtype=np.complex_)
-        for i, state in enumerate(system_properties.states):
-            system_properties.values[i] = system_properties._eigen_value(state)
+    info = system_properties.time_evolution(imaginary=True, n=1, steps=20000).get_eigen_info(0)
+    eigenfunction, eigenvalue = info
+    potential_shape = system_properties.get_potential_shape()
+    print(eigenvalue)
+    plt.plot(potential_shape['x'], eigenfunction.real)
+    plt.plot(potential_shape['x'], eigenfunction.imag)
+    plt.show()
+    #if True:
+    #    #result = system_properties.generate_eigenfunctions(3, steps=30000, verbose=True)
+    #    #np.savez('eigenfunctions/BarriersWellSandwichbiasep_dyn0', result['eigenstates'])
+    #    #print(result['eigenvalues'])
+    #else:
+    #    files = np.load('eigenfunctions/BarriersWellSandwichbiasep_dyn0.npz')
+    #    system_properties.states = files['arr_0']
+    #    system_properties.values = np.zeros(system_properties.states.size, dtype=np.complex_)
+    #    for i, state in enumerate(system_properties.states):
+    #        system_properties.values[i] = system_properties._eigen_value(state)
     #################### EIGENSTATES ###########################################
 
     #################### PHOTOCURRENT ##########################################
     #pc = system_properties.photocurrent(energy=0.145, dt=5e-17)
-    energies = np.linspace(0.1, 0.4, 300)
-    photocurrent = []
-    def get_pc(energy):
-        pc = system_properties.photocurrent(energy=energy, dt=5e-17, Fdyn=5.0)
-        #photocurrent.append(pc)
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print("[%s] > Energy: %.6f eV, PC: %.6e " % (now, energy, pc))
-        return pc
-    
-    pool = Pool(processes=4)
-    photocurrent = pool.map(get_pc, energies)
-    plt.plot(energies, photocurrent)
-    plt.show()
-    np.savez('eigenfunctions/BarriersWellSandwichPhotoCurrent', photocurrent)
+    #energies = np.linspace(0.1, 0.4, 300)
+    #photocurrent = []
+    #def get_pc(energy):
+    #    pc = system_properties.photocurrent(energy=energy, dt=5e-17, ep_dyn=5.0)
+    #    #photocurrent.append(pc)
+    #    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    #    print("[%s] > Energy: %.6f eV, PC: %.6e " % (now, energy, pc))
+    #    return pc
+    #
+    #pool = Pool(processes=4)
+    #photocurrent = pool.map(get_pc, energies)
+    #plt.plot(energies, photocurrent)
+    #plt.show()
+    #np.savez('eigenfunctions/BarriersWellSandwichPhotoCurrent', photocurrent)
     #################### PHOTOCURRENT ##########################################
 
     #################### POTENTIAL SHAPE #######################################

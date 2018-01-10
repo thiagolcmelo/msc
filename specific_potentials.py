@@ -97,7 +97,8 @@ class GenericPotential(object):
 
     # operations
 
-    def time_evolution(self, steps=2000, dt=None, imaginary=False, n=3):
+    def time_evolution(self, steps=2000, t0=0.0,  
+        dt=None, imaginary=False, n=3):
         """
         This function will evolve the `system_waves` in time. It time is
         `imaginary`, then it will try to calculate the `n` first eigenvalues
@@ -107,6 +108,9 @@ class GenericPotential(object):
         ----------
         steps : integer
             the number of time steps to evolve the system
+        t0 : float
+            if the start time, useful when working with time dependent 
+            potentials, it must be in seconds
         dt : float
             the increment in time in **seconds** for each step, the default is 
             the system's default `dt` which is DEFAULT_DT
@@ -128,6 +132,7 @@ class GenericPotential(object):
         self._set_dt(dt)
         self._ajust_units()
 
+        t0_au = t0 / self.au_t
         img = 1.0 if imaginary else 1.0j
         exp_v2 = lambda t: np.exp(- 0.5 * img * self.v_au_full(t) * self.dt_au)
         exp_t = np.exp(- 0.5 * (2 * np.pi * self.k_au) ** 2 * self.dt_au \
@@ -149,7 +154,8 @@ class GenericPotential(object):
 
             for s in range(n):
                 for t in range(steps):
-                    self.states[s] = evolve_once(self.states[s], float(t))
+                    self.states[s] = evolve_once(self.states[s], t0_au + \ 
+                        t * self.dt_au)
 
                     # gram-shimdt
                     for m in range(s):
@@ -169,7 +175,8 @@ class GenericPotential(object):
             for t in range(steps):
                 for s in range(len(self.working_waves)):
                     self.working_waves[s] = \
-                        evolve_once(self.working_waves[s], float(t))
+                        evolve_once(self.working_waves[s], \
+                        t0_au + t * self.dt_au)
 
         return self
 
@@ -230,7 +237,8 @@ class GenericPotential(object):
         self._ajust_units()
         return self
 
-    def turn_dyn_on(self, ep_dyn, w_len=8.1e-6, f=None, E=None, core_only=False):
+    def turn_dyn_on(self, ep_dyn, w_len=8.1e-6, f=None, \
+        energy=None, core_only=False):
         """
         this function applies a sine wave like an electric field to the system
 
@@ -245,7 +253,7 @@ class GenericPotential(object):
             the electric field wave length in meters
         f : float
             the electric field frequency in Hz
-        E : float
+        energy : float
             the wave's energy in eV where it is going to be used `E = hbar * w`
         core_only : boolean
             whether to apply the bias in the whole system or only in the
@@ -260,7 +268,8 @@ class GenericPotential(object):
         self.ep_dyn_v_cm = ep_dyn * 1000.0
         self.ep_dyn_v_m = 100.0 * self.ep_dyn_v_cm
         self.ep_dyn_j_m = self.ep_dyn_v_m * self.q
-        self.ep_dyn_j = np.vectorize(lambda z: (self.x_m[0] - z) * self.ep_dyn_j_m)(self.x_m)
+        self.ep_dyn_j = np.vectorize(lambda z: (self.x_m[0] - z) * \
+            self.ep_dyn_j_m)(self.x_m)
         self.ep_dyn_ev = self.ep_dyn_j / self.ev
         self.ep_dyn_au = self.ep_dyn_ev / self.au2ev
 
@@ -269,8 +278,8 @@ class GenericPotential(object):
             self.omega_au = 2.0 * np.pi * (f * self.au_t)
         elif f:
             self.omega_au = 2.0 * np.pi * (f * self.au_t)
-        elif E:
-            self.omega_au = (E / self.au2ev) / self.hbar_au
+        elif energy:
+            self.omega_au = (energy / self.au2ev) / self.hbar_au
         
         self.v_au_td = lambda t: self.ep_dyn_au * np.sin(self.omega_au * t)
         self._ajust_units()
@@ -329,6 +338,23 @@ class GenericPotential(object):
             the system's length!!
         """
         return self.states[n]
+
+    def get_working(self, n):
+        """
+        return the nth wave function currently under analysis
+
+        Parameters
+        ----------
+        n : integer
+            the waves's index
+        
+        Returns
+        -------
+        wave : array_like
+            a complex array with the systems wave **corresponding** to
+            the system's length!!
+        """
+        return self.working_waves[n]
 
     def get_eigen_info(self, n):
         """
@@ -421,6 +447,7 @@ class GenericPotential(object):
         """
         self.x_m = self.x_nm * 1.0e-9 # nm to m
         self.x_au = self.x_m / self.au_l # m to au
+        self.dx_m = self.x_m[1]-self.x_m[0] # dx
         self.dx_au = self.x_au[1]-self.x_au[0] # dx
         self.k_au = fftfreq(self.N, d=self.dx_au)
 
@@ -465,6 +492,50 @@ class GenericPotential(object):
                 simps(state.conjugate() * state, self.x_au)
             energy += (an.conjugate()*an)*value
         return energy
+
+    def photocurrent(self, energy, T=1.0e-12, ep_dyn=5.0, dt=None):
+        """
+        this function calculates the photocurrent *************
+
+        Parameters
+        ----------
+        energy : float
+            the energy of incident photons in eV
+        T : float
+            the total time for measuring the electric current in seconds
+        ep_dyn : float
+            the intensity of the 
+
+        Returns
+        -------
+        j : float
+            the photocurrent in Ampere (not sure hehe)
+        """
+        self._set_dt(dt)
+        
+        # work on w and turn electric field on
+        self.work_on(0).turn_dyn_on(ep_dyn=ep_dyn, energy=energy)
+
+        j_t = []
+        pb = self.points_before - 100
+        pa = self.points_after + 100
+
+        for i, t in np.linspace(0.0, T, int(T / self.dt)):
+            psi = self.time_evolution(steps=1, t0=t).get_working(0)
+
+            # density of current flowing from left to right
+            j_l = ((-0.5j/(self.m_eff[pb])) * (psi[pb].conjugate() * \
+                (psi[pb+1]-psi[pb-1]) - psi[pb] * (psi[pb+1].conjugate() - \
+                psi[pb-1].conjugate())) / (2*self.dx_m)).real
+
+            # density of current flowing from right to left
+            j_r = ((-0.5j/(self.m_eff[pa])) * (psi[pa].conjugate() * \
+                (psi[pa+1]-psi[pa-1]) - psi[pa] * (psi[pa+1].conjugate() - \
+                psi[pa-1].conjugate())) / (2*self.dx_m)).real
+
+            j_t.append(j_r-j_l)
+
+        return self.q * simps(j_t, t_grid) / T
 
     def generate_eigenfunctions(self, n=3, steps=2000, dt=None, verbose=False):
         """
@@ -647,7 +718,7 @@ class GenericPotential(object):
         #self.v_au_abs = np.zeros(self.N)
         return self.pulse
 
-    def photocurrent(self, energy, T=1.0e-12, ep_dyn=5.0, dt=None):
+    def old_photocurrent(self, energy, T=1.0e-12, ep_dyn=5.0, dt=None):
         self.energy_ex_ev = energy
         self.energy_ex_au = energy /  self.au2ev
         self.T = T

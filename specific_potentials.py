@@ -16,9 +16,8 @@ from scipy.fftpack import fft, ifft, fftfreq
 from datetime import datetime
 from types import *
 
+import os, time
 from multiprocessing import Pool, TimeoutError
-import time
-import os
 
 from band_structure_database import Alloy, Database
 

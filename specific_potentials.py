@@ -98,7 +98,7 @@ class GenericPotential(object):
     # operations
 
     def time_evolution(self, steps=2000, t0=0.0,  
-        dt=None, imaginary=False, n=3):
+        dt=None, imaginary=False, n=3, save=True, load=True):
         """
         This function will evolve the `system_waves` in time. It time is
         `imaginary`, then it will try to calculate the `n` first eigenvalues
@@ -120,17 +120,22 @@ class GenericPotential(object):
         n : integer
             the number of eigenvalues and eigenstates to be calculated in case
             of imaginary time evolution, the edfault is `3`
-
+        save : boolean
+            whether to save the results of an imaginary evolution, which means
+            save the eigenstates for further using. The eigenstates will be
+            saved in a file at the folder `eigenfunction`
+        load : boolean
+            use stored eigenstates when available
         Returns
         -------
         self : GenericPotential
             the current GenericPotential object for further use in chain calls
         """
         assert not imaginary or n > 0
-        assert imaginary or self.system_waves
+        assert imaginary or type(self.working_waves) is np.ndarray
         
         self._set_dt(dt)
-        self._ajust_units()
+        #self._ajust_units()
 
         t0_au = t0 / self.au_t
         img = 1.0 if imaginary else 1.0j
@@ -141,6 +146,30 @@ class GenericPotential(object):
             exp_v2(t) * ifft(exp_t * fft(exp_v2(t) * psi))
         
         if imaginary:
+            try:
+                fst = self.bias_raw
+            except:
+                fst = 0.0
+            try:
+                fdyn = self.ep_dyn_raw
+            except:
+                fdyn = 0.0
+
+            filename = "{class_name}_{n}_{steps}_{bias:.2f}_{dyn:.2f}".format( \
+                class_name=self.__class__.__name__,
+                n=n, steps=steps, bias=fst, dyn=fdyn)
+            
+            if load:
+                try:
+                    files = np.load("eigenfunctions/{0}.npz".format(filename))
+                    self.states = files['arr_0']
+                    self.values = np.array([\
+                        self._eigen_value(i) for i,_ in \
+                        enumerate(self.states)]).astype(np.complex_)
+                    return self
+                except:
+                    pass
+
             # creates numpy arrays for hold the calculated values
             self.states = np.zeros((n, self.N), dtype=np.complex_)
             self.values = np.zeros(n, dtype=np.complex_)
@@ -154,7 +183,7 @@ class GenericPotential(object):
 
             for s in range(n):
                 for t in range(steps):
-                    self.states[s] = evolve_once(self.states[s], t0_au + \ 
+                    self.states[s] = evolve_once(self.states[s], t0_au + \
                         t * self.dt_au)
 
                     # gram-shimdt
@@ -170,7 +199,11 @@ class GenericPotential(object):
                         np.sqrt(simps(np.absolute(self.states[s]) ** 2, \
                         self.x_au))
 
-                self.values[s] = self._eigen_value(self.states[s])
+                self.values[s] = self._eigen_value(s)
+            
+            if save:
+                np.savez("eigenfunctions/{0}".format(filename), \
+                    self.states)
         else:
             for t in range(steps):
                 for s in range(len(self.working_waves)):
@@ -201,6 +234,7 @@ class GenericPotential(object):
         self : GenericPotential
             the current GenericPotential object for further use in chain calls
         """
+        self.bias_raw = bias
         self.bias_v_cm = bias * 1000.0
         self.bias_v_m = 100.0 * self.bias_v_cm
         self.bias_j_m = self.bias_v_m * self.q
@@ -264,6 +298,8 @@ class GenericPotential(object):
         self : GenericPotential
             the current GenericPotential object for further use in chain calls
         """
+        self.ep_dyn_raw = ep_dyn
+
         # KV/cm
         self.ep_dyn_v_cm = ep_dyn * 1000.0
         self.ep_dyn_v_m = 100.0 * self.ep_dyn_v_cm
@@ -273,19 +309,22 @@ class GenericPotential(object):
         self.ep_dyn_ev = self.ep_dyn_j / self.ev
         self.ep_dyn_au = self.ep_dyn_ev / self.au2ev
 
-        if w_len:
-            f = self.c / w_len # Hz
-            self.omega_au = 2.0 * np.pi * (f * self.au_t)
+        if energy:
+            self.omega_au = (energy / self.au2ev) / self.hbar_au
         elif f:
             self.omega_au = 2.0 * np.pi * (f * self.au_t)
-        elif energy:
-            self.omega_au = (energy / self.au2ev) / self.hbar_au
+        elif w_len:
+            f = self.c / w_len # Hz
+            self.omega_au = 2.0 * np.pi * (f * self.au_t)
+        else:
+            raise Exception("""It must be informed one of the following: 
+                wave energy, wave frequency, or wave length""")
         
         self.v_au_td = lambda t: self.ep_dyn_au * np.sin(self.omega_au * t)
         self._ajust_units()
         return self
 
-    def turn_dyn_off(self)
+    def turn_dyn_off(self):
         """
         this function removes the radiation previously applied if any...
 
@@ -415,20 +454,21 @@ class GenericPotential(object):
         self.dt = dt or DEFAULT_DT
         self.dt_au = self.dt / self.au_t
 
-    def _eigen_value(self, psi):
+    def _eigen_value(self, n):
         """ 
         **Only** for eigenfunctions of the object's potential
 
         Patameters
         ----------
-        psi : array_like
-            the eigenfunction for calculating the eigenvalue
+        n : integer
+            the eigenstate index
 
         Returns
         -------
         eigenvalue : float
-            the eigenvalue corresponding to the given eigenfunction
+            the eigenvalue corresponding to the indicated eigenstate
         """
+        psi = np.copy(self.states[n])
         second_derivative = np.asarray(psi[0:-2]-2*psi[1:-1]+psi[2:]) \
             /self.dx_au**2
         psi = psi[1:-1]
@@ -519,23 +559,22 @@ class GenericPotential(object):
         j_t = []
         pb = self.points_before - 100
         pa = self.points_after + 100
-
-        for i, t in np.linspace(0.0, T, int(T / self.dt)):
+        t_grid = np.linspace(0.0, T, int(T / self.dt))
+        
+        for t in t_grid:
             psi = self.time_evolution(steps=1, t0=t).get_working(0)
-
             # density of current flowing from left to right
             j_l = ((-0.5j/(self.m_eff[pb])) * (psi[pb].conjugate() * \
                 (psi[pb+1]-psi[pb-1]) - psi[pb] * (psi[pb+1].conjugate() - \
-                psi[pb-1].conjugate())) / (2*self.dx_m)).real
-
+                psi[pb-1].conjugate())) / (2*self.dx_au)).real
             # density of current flowing from right to left
             j_r = ((-0.5j/(self.m_eff[pa])) * (psi[pa].conjugate() * \
                 (psi[pa+1]-psi[pa-1]) - psi[pa] * (psi[pa+1].conjugate() - \
-                psi[pa-1].conjugate())) / (2*self.dx_m)).real
-
+                psi[pa-1].conjugate())) / (2*self.dx_au)).real
             j_t.append(j_r-j_l)
-
-        return self.q * simps(j_t, t_grid) / T
+            
+        #return self.q * simps(j_t, t_grid) / T
+        return simps(j_t, t_grid) / T
 
     def generate_eigenfunctions(self, n=3, steps=2000, dt=None, verbose=False):
         """
@@ -574,10 +613,10 @@ class GenericPotential(object):
                 self.states[s] /= np.sqrt(simps(np.absolute(self.states[s]) ** 2, self.x_au))
 
                 if verbose and t % 100 == 0:
-                    ev = self._eigen_value(self.states[s])
+                    ev = self._eigen_value(s)
                     print('t = %d, E_%d: %.10f meV' % (t, s, 1000*ev))
             
-            self.values[s] = self._eigen_value(self.states[s])
+            self.values[s] = self._eigen_value(s)
             if verbose:
                 print("E_%d = %.10f eV" % (s, self.values[s]))
 
@@ -1151,10 +1190,13 @@ if __name__ == '__main__':
     info = system_properties.time_evolution(imaginary=True, n=1, steps=20000).get_eigen_info(0)
     eigenfunction, eigenvalue = info
     potential_shape = system_properties.get_potential_shape()
-    print(eigenvalue)
-    plt.plot(potential_shape['x'], eigenfunction.real)
-    plt.plot(potential_shape['x'], eigenfunction.imag)
-    plt.show()
+    #print(eigenvalue)
+    #pc = system_properties.photocurrent(energy=0.148, dt=5e-17)
+    #print(pc)
+
+    #plt.plot(potential_shape['x'], eigenfunction.real)
+    #plt.plot(potential_shape['x'], eigenfunction.imag)
+    #plt.show()
     #if True:
     #    #result = system_properties.generate_eigenfunctions(3, steps=30000, verbose=True)
     #    #np.savez('eigenfunctions/BarriersWellSandwichbiasep_dyn0', result['eigenstates'])
@@ -1164,24 +1206,24 @@ if __name__ == '__main__':
     #    system_properties.states = files['arr_0']
     #    system_properties.values = np.zeros(system_properties.states.size, dtype=np.complex_)
     #    for i, state in enumerate(system_properties.states):
-    #        system_properties.values[i] = system_properties._eigen_value(state)
+    #        system_properties.values[i] = system_properties._eigen_value(i)
     #################### EIGENSTATES ###########################################
 
     #################### PHOTOCURRENT ##########################################
     #pc = system_properties.photocurrent(energy=0.145, dt=5e-17)
-    #energies = np.linspace(0.1, 0.4, 300)
-    #photocurrent = []
-    #def get_pc(energy):
-    #    pc = system_properties.photocurrent(energy=energy, dt=5e-17, ep_dyn=5.0)
-    #    #photocurrent.append(pc)
-    #    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    #    print("[%s] > Energy: %.6f eV, PC: %.6e " % (now, energy, pc))
-    #    return pc
-    #
-    #pool = Pool(processes=4)
-    #photocurrent = pool.map(get_pc, energies)
-    #plt.plot(energies, photocurrent)
-    #plt.show()
+    energies = np.linspace(0.1, 0.4, 300)
+    photocurrent = []
+    def get_pc(energy):
+        pc = system_properties.photocurrent(energy=energy, dt=5e-17, ep_dyn=5.0)
+        #photocurrent.append(pc)
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print("[%s] > Energy: %.6f eV, PC: %.6e " % (now, energy, pc))
+        return pc
+    
+    pool = Pool(processes=4)
+    photocurrent = pool.map(get_pc, energies)
+    plt.plot(energies, photocurrent)
+    plt.show()
     #np.savez('eigenfunctions/BarriersWellSandwichPhotoCurrent', photocurrent)
     #################### PHOTOCURRENT ##########################################
 
@@ -1197,7 +1239,7 @@ if __name__ == '__main__':
     #system_properties.states = files['arr_0']
     #system_properties.values = np.zeros(system_properties.states.size, dtype=np.complex_)
     #for i, state in enumerate(system_properties.states):
-    #    system_properties.values[i] = system_properties._eigen_value(state)
+    #    system_properties.values[i] = system_properties._eigen_value(i)
     
     #wave = 2*system_properties.states[0] + system_properties.states[1]
     #print(system_properties.wave_energy(wave))

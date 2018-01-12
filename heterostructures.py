@@ -18,7 +18,7 @@ from scipy.fftpack import fft, ifft, fftfreq
 from datetime import datetime
 from types import *
 
-import os, time
+import os, time, re
 from multiprocessing import Pool, TimeoutError
 
 from band_structure_database import Alloy, Database
@@ -99,6 +99,93 @@ class HeteroStructure(object):
 
     # operations
 
+    def time_evolution(self, steps=2000, t0=0.0,  
+        dt=None, imaginary=False, n=3, save=True, load=True):
+        """
+        This function will evolve the `system_waves` in time. It time is
+        `imaginary`, then it will try to calculate the `n` first eigenvalues
+        and eigenstates of the system.
+
+        Parameters
+        ----------
+        steps : integer
+            the number of time steps to evolve the system
+        t0 : float
+            if the start time, useful when working with time dependent 
+            potentials, it must be in seconds
+        dt : float
+            the increment in time in **seconds** for each step, the default is 
+            the system's default `dt` which is DEFAULT_DT
+        imaginary : boolean
+            *False* stands for not imaginary time evolution, while *True* stands
+            for the opposite
+        n : integer
+            the number of eigenvalues and eigenstates to be calculated in case
+            of imaginary time evolution, the edfault is `3`
+        save : boolean
+            whether to save the results of an imaginary evolution, which means
+            save the eigenstates for further using. The eigenstates will be
+            saved in a file at the folder `eigenfunction`
+        load : boolean
+            use stored eigenstates when available
+        Returns
+        -------
+        self : GenericPotential
+            the current GenericPotential object for further use in chain calls
+        """
+        
+        self._set_dt(dt)
+        t0_au = t0 / self.au_t
+        
+        if imaginary:
+
+            try:
+                fst = self.bias_raw
+            except:
+                fst = 0.0
+            try:
+                fdyn = self.ep_dyn_raw
+            except:
+                fdyn = 0.0
+
+            filename = "{cn}_{n}_{sts}_{bias:.2f}_{dyn:.2f}".format( \
+                cn=self.__class__.__name__,
+                n=n, sts=steps, bias=fst, dyn=fdyn)
+            directory = "devices"
+            full_filename = os.path.join(directory, filename)
+
+            if load:
+                try:
+                    self.device = pd.read_csv(full_filename)
+                    return True
+                except:
+                    pass
+
+            # creates numpy arrays for hold the calculated values
+            self.values = np.zeros(n, dtype=np.complex_)
+
+            # create kickstart states
+            # they consist of legendre polinomials modulated by a gaussian
+            short_grid = np.linspace(-1, 1, self.N)
+            g = gaussian(self.N, std=int(self.N/100))
+            states = np.array([g * sp.legendre(i)(short_grid) \
+                for i in range(n)],dtype=np.complex_)
+            for i, state in enumerate(states):
+                self.devece['state_{}'.format(i)] = state
+
+            for s in range(n):
+                for t in range(steps):
+
+            
+            if save:
+                if not os.path.exists(directory):
+                    os.makedirs(directory)
+                self.device.to_csv(full_filename)
+        else:
+            for w in self._working_names():
+                for t in range(steps):
+            
+        return self
 
     def normalize_device(self):
         """
@@ -114,16 +201,17 @@ class HeteroStructure(object):
             device = self.device
         except:
             device = pd.DataFrame(dtype=np.complex_)
-        device.diff()
+        
         # unique static inputs
         device['x_nm'] = np.copy(self.x_nm)
         device['v_ev'] = np.copy(self.v_ev)
+        device['m_eff'] = np.copy(self.m_eff)
 
-        # direct and reciprocal grid
+        # direct and reciprocal grids
         device['x_m'] = device.x_nm * 1.0e-9 # nm to m
         device['x_au'] = device.x_m / self.au_l # m to au
-        self.dx_m = device.x_m[1]-device.x_m[0] # dx
-        self.dx_au = device.x_au[1]-device.x_au[0] # dx
+        self.dx_m = device.x_m.diff()[1] # dx
+        self.dx_au = device.x_au.diff()[1] # dx
         device['k_au'] = fftfreq(self.N, d=self.dx_au)
 
         # static potential (ti = time independent)
@@ -147,6 +235,20 @@ class HeteroStructure(object):
         except:
             self.v_au_full = lambda t: self.device.v_au_ti
 
+        # imaginary time propagators
+        exp_v2_i = lambda t: np.exp(- 0.5 * self.v_au_full(t) * self.dt_au)
+        exp_t_i = np.exp(- 0.5 * (2 * np.pi * self.device.k_au) ** 2 * \
+            self.dt_au / self.m_eff)
+        self.evolve_imag = lambda psi, t: exp_v2_i(t) * ifft(exp_t_i * \
+            fft(exp_v2_i(t) * psi))
+
+        # normal propagators
+        exp_v2 = lambda t: np.exp(- 0.5j * self.v_au_full(t) * self.dt_au)
+        exp_t = np.exp(- 0.5j * (2 * np.pi * self.device.k_au) ** 2 * \
+            self.dt_au / self.m_eff)
+        self.evolve_real = lambda psi, t: exp_v2(t) * ifft(exp_t * \
+            fft(exp_v2(t) * psi))
+
         return self
 
     # internals
@@ -164,30 +266,72 @@ class HeteroStructure(object):
         self.dt = dt or DEFAULT_DT
         self.dt_au = self.dt / self.au_t
     
-    def _eigen_value(self, n):
+    def _eigen_value(self, n, t=0.0):
         """ 
-        **Only** for eigenfunctions of the object's potential
+        **Only** for eigenfunctions of the current device
 
         Patameters
         ----------
         n : integer
             the eigenstate index
+        t : float
+            the time in atomic units, for use in time dependent potentials
 
         Returns
         -------
         eigenvalue : float
             the eigenvalue corresponding to the indicated eigenstate
         """
-        psi = np.copy(self.states[n])
-        second_derivative = np.asarray(psi[0:-2]-2*psi[1:-1]+psi[2:]) \
-            /self.dx_au**2
-        psi = psi[1:-1]
-        psi_st = np.conjugate(psi)
-        me = np.asarray(self.m_eff[1:-1])
-        h_p_h = simps(psi_st * (-0.5 * second_derivative / me + \
-            self.v_au[1:-1] * psi), self.x_au[1:-1])
-        h_p_h /= simps(psi_st * psi, self.x_au[1:-1])
-        return h_p_h.real * self.au2ev
+        sn = "state_{}".format(n)
+        sn_st = "state_{}_conjugate".format(n)
+        sn_d2 = "state_{}_2nd_derivative".format(n)
+        
+        # get only necessary columns
+        device = self.device[['x_au', 'm_eff', sn]]
 
+        # second derivative of psi_n
+        device[sn_d2] = (device[sn].shift(1) - 2 * device[sn] + \
+            device[sn].shift(-1)) / device['x_au'].diff()**2
+        
+        # remove those NA in the edges
+        device = device.iloc[1:-1]
+
+        # complex conjugate
+        device[sn_st] = np.conjugate(device[sn])
+
+        # <Psi|H|Psi>
+        p_h_p = simps(device[sn_st] * (-0.5 * device[sn_d2] / device['m_eff'] \
+            + self.v_au_full(t) * device[sn]), device['x_au'])
+        # / <Psi|Psi> because I trust no one
+        p_h_p /= simps(device[sn_st] * device[sn], device['x_au'])
+
+        return p_h_p.real * self.au2ev # return value in eV
+
+    def _eigen_names(self):
+        """
+        it returns the name of the columns where the eigenstates are stored in
+        the main device
+
+        Returns
+        -------
+        names : array_like
+            the names of the columns in the device where eigenstates are stored
+        """
+        cols = self.device.columns
+        return [c for c in cols if re.match('^state_\d+$', c)]
+
+    def _working_names(self):
+        """
+        it returns the name of the columns where the working waves are stored in
+        the main device
+
+        Returns
+        -------
+        names : array_like
+            the names of the columns in the device where working waves are
+            stored
+        """
+        cols = self.device.columns
+        return [c for c in cols if re.match('^working_\d+$', c)]
 
     # (df['f'].shift(1)-2*df['f']+df['f'].shift(-1))/(df['x'].diff()**2)

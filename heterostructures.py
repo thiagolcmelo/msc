@@ -45,6 +45,7 @@ class HeteroStructure(object):
     - Energy: `eV`
     - Length: `nm`
     - Time: `s`
+    - Electric potential: `KV/cm`
     """
 
     def __init__(self, N=8192):
@@ -161,10 +162,11 @@ class HeteroStructure(object):
             the number of time steps to evolve the system
         t0 : float
             if the start time, useful when working with time dependent 
-            potentials, it must be in seconds
+            potentials, it must be in seconds. **It will be used only for real
+            time evolution**
         dt : float
             the increment in time in **seconds** for each step, the default is 
-            the system's default `dt` which is DEFAULT_DT
+            the system's default `dt` which is DEFAULT_DT.
         imaginary : boolean
             *False* stands for not imaginary time evolution, while *True* stands
             for the opposite
@@ -179,14 +181,12 @@ class HeteroStructure(object):
             use stored eigenstates when available
         Returns
         -------
-        self : GenericPotential
+        self : HeteroStructure
             the current GenericPotential object for further use in chain calls
         """
         
-        self._set_dt(dt)
-        t0_au = t0 / self.au_t
-        
         if imaginary:
+            self._set_dt(dt)
 
             try:
                 fst = self.bias_raw
@@ -234,7 +234,7 @@ class HeteroStructure(object):
                 sn = 'state_{}'.format(s)
                 for t in range(steps):
                     self.device[sn] = self.evolve_imag(self.device[sn], \
-                        t0_au + t * self.dt_au)
+                        t * self.dt_au)
 
                     # gram-shimdt
                     for m in range(s):
@@ -254,12 +254,13 @@ class HeteroStructure(object):
                     os.makedirs(directory)
                 self.device.to_csv(full_filename)
         else:
+            self._set_dt(dt)
+            t0_au = t0 / self.au_t
             # this might be parallel
             for w in self._working_names():
                 for t in range(steps):
                     self.device[w] = self.evolve_real(self.device[w], \
                         t0_au + t * self.dt_au)
-
         return self
 
     def normalize_device(self):
@@ -344,7 +345,7 @@ class HeteroStructure(object):
 
         Returns
         -------
-        self : GenericPotential
+        self : HeteroStructure
             the current GenericPotential object for further use in chain calls
         """
         self.bias_raw = bias
@@ -378,7 +379,7 @@ class HeteroStructure(object):
 
         Returns
         -------
-        self : GenericPotential
+        self : HeteroStructure
             the current GenericPotential object for further use in chain calls
         """
         self.bias_au = None
@@ -408,7 +409,7 @@ class HeteroStructure(object):
 
         Returns
         -------
-        self : GenericPotential
+        self : HeteroStructure
             the current GenericPotential object for further use in chain calls
         """
         self.ep_dyn_raw = ep_dyn
@@ -442,7 +443,7 @@ class HeteroStructure(object):
 
         Returns
         -------
-        self : GenericPotential
+        self : HeteroStructure
             the current GenericPotential object for further use in chain calls
         """
         self.v_au_td = None
@@ -461,7 +462,7 @@ class HeteroStructure(object):
 
         Returns
         -------
-        self : GenericPotential
+        self : HeteroStructure
             the current GenericPotential object for further use in chain calls
         """
 
@@ -480,64 +481,6 @@ class HeteroStructure(object):
                 self.device['state_{}'.format(n)] 
         return self
 
-    def photocurrent(self, energy, T=1.0e-12, ep_dyn=5.0, dt=None):
-        """
-        this function calculates the photocurrent *************
-
-        Parameters
-        ----------
-        energy : float
-            the energy of incident photons in eV
-        T : float
-            the total time for measuring the electric current in seconds
-        ep_dyn : float
-            the intensity of the 
-
-        Returns
-        -------
-        j : float
-            the photocurrent in Ampere (not sure hehe)
-        """
-        self.energy_ex_ev = energy
-        self.energy_ex_au = energy /  self.au2ev
-        self.T = T
-        self.T_au = T / self.au_t
-        self._set_dt(dt)
-
-        # KV/cm
-        self.Fdyn_v_cm = ep_dyn * 1000.0
-        self.Fdyn_v_m = 100.0 * self.Fdyn_v_cm
-        self.Fdyn_j_m = self.Fdyn_v_m * self.q
-        self.Fdyn_j = np.vectorize(lambda z: (self.device.x_m[0] - z) * self.Fdyn_j_m)(self.device.x_m)
-        self.Fdyn_ev = self.Fdyn_j / self.ev
-        self.Fdyn_au = self.Fdyn_ev / self.au2ev
-        
-        self.omega_au = self.energy_ex_au / self.hbar_au
-        exp_t = np.exp(- 0.5j * (2 * np.pi * self.device.k_au) ** 2 * self.dt_au / self.device.m_eff)
-        self.PSI = self.device.state_0
-        self.j_t = []
-
-        self.t_grid_au = np.linspace(0.0, self.T_au, int(self.T_au / self.dt_au))
-        
-        pb = self.points_before - 100
-        pa = self.points_after + 100
-
-        self.turn_dyn_on(ep_dyn=ep_dyn, energy=energy)
-        for i, t_au in enumerate(self.t_grid_au):
-            self.PSI = self.evolve_real(self.PSI, t=t_au)
-            
-            j_l = ((-0.5j/(self.device.m_eff[pb])) * (self.PSI[pb].conjugate() * (self.PSI[pb+1]-self.PSI[pb-1]) - self.PSI[pb] * (self.PSI[pb+1].conjugate()-self.PSI[pb-1].conjugate())) / (2*self.dx_au)).real
-            j_r = ((-0.5j/(self.device.m_eff[pa])) * (self.PSI[pa].conjugate() * (self.PSI[pa+1]-self.PSI[pa-1]) - self.PSI[pa] * (self.PSI[pa+1].conjugate()-self.PSI[pa-1].conjugate())) / (2*self.dx_au)).real
-
-            self.j_t.append(j_r-j_l)
-            #if i % 1000 == 0:
-            #    print(i)
-        
-        #plt.plot(self.t_grid_au, self.j_t)
-        #plt.show()
-        #return self.q * simps(self.j_t, self.t_grid_au) / self.T_au
-        return simps(self.j_t, self.t_grid_au) / self.T_au
-
     # internals
 
     def _set_dt(self, dt=None):
@@ -549,9 +492,16 @@ class HeteroStructure(object):
         ----------
         dt : float
             the default time increment, in **seconds**
+
+        Returns
+        -------
+        self : HeteroStructure
+            the current GenericPotential object for further use in chain calls
         """
         self.dt = dt or DEFAULT_DT
         self.dt_au = self.dt / self.au_t
+
+        return self
     
     def _eigen_value(self, n, t=0.0):
         """ 
@@ -620,6 +570,48 @@ class HeteroStructure(object):
         """
         cols = self.device.columns
         return sorted([c for c in cols if re.match('^working_\d+$', c)])
+
+    # miscellaneous and legacy
+
+    def photocurrent(self, energy, T=1.0e-12, ep_dyn=5.0, dt=None):
+        """
+        this function calculates the photocurrent *************
+
+        Parameters
+        ----------
+        energy : float
+            the energy of incident photons in eV
+        T : float
+            the total time for measuring the electric current in seconds
+        ep_dyn : float
+            the intensity of the 
+
+        Returns
+        -------
+        j : float
+            the photocurrent in Ampere (not sure hehe)
+        """
+        self._set_dt(dt).turn_dyn_on(ep_dyn=ep_dyn, energy=energy)
+        
+        T_au = T / self.au_t
+        t_grid_au = np.linspace(0.0, T_au, int(T_au / self.dt_au))
+
+        pb = self.points_before - 100
+        pa = self.points_after + 100
+
+        psi = self.device.state_0
+        j_t = []
+        
+        psi = self.work_on(0).get_working(0)
+
+        for i, t_au in enumerate(t_grid_au):
+            psi = self.evolve_real(psi, t=t_au)
+            #psi = self.time_evolution(steps=1, t0=t_au*self.au_t).get_working(0)
+            j_l = ((-0.5j/(self.device.m_eff[pb])) * (psi[pb].conjugate() * (psi[pb+1]-psi[pb-1]) - psi[pb] * (psi[pb+1].conjugate()-psi[pb-1].conjugate())) / (2*self.dx_au)).real
+            j_r = ((-0.5j/(self.device.m_eff[pa])) * (psi[pa].conjugate() * (psi[pa+1]-psi[pa-1]) - psi[pa] * (psi[pa+1].conjugate()-psi[pa-1].conjugate())) / (2*self.dx_au)).real
+            j_t.append(j_r-j_l)
+            
+        return self.q * simps(j_t, t_grid_au) / T_au
 
 class BarriersWellSandwich(HeteroStructure):
     """
@@ -705,21 +697,21 @@ if __name__ == '__main__':
     info = system_properties.time_evolution(imaginary=True, n=3, steps=20000).get_system_states()
     #eigenfunction, eigenvalue = info
     #print(eigenvalue)
-    #pc = system_properties.photocurrent(energy=0.1, dt=5e-17)
-    #print(pc)
-    #pc = system_properties.photocurrent(energy=0.145, dt=5e-17)
-    #print(pc)
+    pc = system_properties.photocurrent(energy=0.1, dt=5e-17)
+    print(pc)
+    pc = system_properties.photocurrent(energy=0.145, dt=5e-17)
+    print(pc)
 
-    energies = np.linspace(0.1, 0.399, 300)
-    photocurrent = []
-    def get_pc(energy):
-        pc = system_properties.photocurrent(energy=energy, dt=5e-17, ep_dyn=5.0)
-        #photocurrent.append(pc)
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print("[%s] > Energy: %.6f eV, PC: %.6e " % (now, energy, pc))
-        return pc
-    
-    pool = Pool(processes=4)
-    photocurrent = pool.map(get_pc, energies)
-    plt.plot(energies, photocurrent)
-    plt.show()
+    #energies = np.linspace(0.1, 0.399, 300)
+    #photocurrent = []
+    #def get_pc(energy):
+    #    pc = system_properties.photocurrent(energy=energy, dt=5e-17, ep_dyn=5.0)
+    #    #photocurrent.append(pc)
+    #    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    #    print("[%s] > Energy: %.6f eV, PC: %.6e " % (now, energy, pc))
+    #    return pc
+    #
+    #pool = Pool(processes=4)
+    #photocurrent = pool.map(get_pc, energies)
+    #plt.plot(energies, photocurrent)
+    #plt.show()

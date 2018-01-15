@@ -129,6 +129,23 @@ class HeteroStructure(object):
         working = self._working_names()
         return (self.device[['x_nm']+working], self.values)
 
+    def get_working(self, n):
+        """
+        return the nth wave function currently under analysis
+
+        Parameters
+        ----------
+        n : integer
+            the waves's index
+        
+        Returns
+        -------
+        wave : array_like
+            a complex array with the systems wave **corresponding** to
+            the system's length!!
+        """
+        return self.device['working_{}'.format(n)]
+
     # operations
 
     def time_evolution(self, steps=2000, t0=0.0, \
@@ -309,6 +326,218 @@ class HeteroStructure(object):
 
         return self
 
+    def turn_bias_on(self, bias, core_only=False):
+        """
+        this function applies a static bias accross the system, the `bias` must
+        be given in KV/cm, God knows why...
+
+        if the `core_only` is true, the bias is not applied to the span that
+        surrounds the system under study
+
+        Parameters
+        ----------
+        bias : float
+            the bias in KV/cm
+        core_only : boolean
+            whether to apply the bias in the whole system or only in the
+            core under study and not in the span/bulk area
+
+        Returns
+        -------
+        self : GenericPotential
+            the current GenericPotential object for further use in chain calls
+        """
+        self.bias_raw = bias
+        self.bias_v_cm = bias * 1000.0
+        self.bias_v_m = 100.0 * self.bias_v_cm
+        self.bias_j_m = self.bias_v_m * self.q
+
+        if core_only:
+            def bias_shape(z):
+                i = np.searchsorted(self.device.x_m, z)
+                if i < self.points_before:
+                    return 0.0
+                elif self.points_before < i < self.points_after:
+                    return (self.device.x_m[self.points_before] - z) * \
+                        self.bias_j_m
+                else:
+                    return -self.device.x_m[self.points_after] * self.bias_j_m
+            self.bias_j = np.vectorize(bias_shape)(self.device.x_m)
+        else:
+            self.bias_j = np.vectorize(lambda z: \
+                (self.device.x_m[0] - z) * self.bias_j_m)(self.device.x_m)
+        
+        self.bias_ev = self.bias_j / self.ev
+        self.bias_au = self.bias_ev / self.au2ev
+
+        return self.normalize_device()
+
+    def turn_bias_off(self):
+        """
+        this function removes the bias previously applied if any...
+
+        Returns
+        -------
+        self : GenericPotential
+            the current GenericPotential object for further use in chain calls
+        """
+        self.bias_au = None
+        return self.normalize_device()
+
+    def turn_dyn_on(self, ep_dyn, w_len=8.1e-6, f=None, \
+        energy=None, core_only=False):
+        """
+        this function applies a sine wave like an electric field to the system
+
+        if the `core_only` is true, the bias is not applied to the span that
+        surrounds the system under study
+
+        Parameters
+        ----------
+        ep_dyn : float
+            the electric potential in KV/cm
+        w_len : float
+            the electric field wave length in meters
+        f : float
+            the electric field frequency in Hz
+        energy : float
+            the wave's energy in eV where it is going to be used `E = hbar * w`
+        core_only : boolean
+            whether to apply the bias in the whole system or only in the
+            core under study and not in the span/bulk area
+
+        Returns
+        -------
+        self : GenericPotential
+            the current GenericPotential object for further use in chain calls
+        """
+        self.ep_dyn_raw = ep_dyn
+
+        # KV/cm
+        self.ep_dyn_v_cm = ep_dyn * 1000.0
+        self.ep_dyn_v_m = 100.0 * self.ep_dyn_v_cm
+        self.ep_dyn_j_m = self.ep_dyn_v_m * self.q
+        self.ep_dyn_j = np.vectorize(lambda z: (self.device.x_m[0] - z) * \
+            self.ep_dyn_j_m)(self.device.x_m)
+        self.ep_dyn_ev = self.ep_dyn_j / self.ev
+        self.ep_dyn_au = self.ep_dyn_ev / self.au2ev
+
+        if energy:
+            self.omega_au = (energy / self.au2ev) / self.hbar_au
+        elif f:
+            self.omega_au = 2.0 * np.pi * (f * self.au_t)
+        elif w_len:
+            f = self.c / w_len # Hz
+            self.omega_au = 2.0 * np.pi * (f * self.au_t)
+        else:
+            raise Exception("""It must be informed one of the following: 
+                wave energy, wave frequency, or wave length""")
+        
+        self.v_au_td = lambda t: self.ep_dyn_au * np.sin(self.omega_au * t)
+        return self.normalize_device()
+
+    def turn_dyn_off(self):
+        """
+        this function removes the radiation previously applied if any...
+
+        Returns
+        -------
+        self : GenericPotential
+            the current GenericPotential object for further use in chain calls
+        """
+        self.v_au_td = None
+        return self.normalize_device()
+
+    def work_on(self, n=0, indexes=None):
+        """
+        set some eigenfunction or some of them to the working waves
+
+        Parameters
+        ----------
+        n : integer
+            the index of some eigenfunction to be used as system wave
+        indexes : array_like
+            the indexes of some eigenfunctions to be used as system wave
+
+        Returns
+        -------
+        self : GenericPotential
+            the current GenericPotential object for further use in chain calls
+        """
+
+        # erase working waves
+        self.device.drop(self._working_names(), axis=1, \
+            inplace=True, errors='ignore')
+
+        if indexes:
+            for i, idx in enumerate(indexes):
+                self.device['working_{}'.format(i)] = \
+                    self.device['state_{}'.format(idx)] 
+            #self.working_waves = self.states.take(indexes)
+        else:
+            #self.working_waves = np.array([np.copy(self.states[n])])
+            self.device['working_{}'.format(n)] = \
+                self.device['state_{}'.format(n)] 
+        return self
+
+    def photocurrent(self, energy, T=1.0e-12, ep_dyn=5.0, dt=None):
+        """
+        this function calculates the photocurrent *************
+
+        Parameters
+        ----------
+        energy : float
+            the energy of incident photons in eV
+        T : float
+            the total time for measuring the electric current in seconds
+        ep_dyn : float
+            the intensity of the 
+
+        Returns
+        -------
+        j : float
+            the photocurrent in Ampere (not sure hehe)
+        """
+        self.energy_ex_ev = energy
+        self.energy_ex_au = energy /  self.au2ev
+        self.T = T
+        self.T_au = T / self.au_t
+        self._set_dt(dt)
+
+        # KV/cm
+        self.Fdyn_v_cm = ep_dyn * 1000.0
+        self.Fdyn_v_m = 100.0 * self.Fdyn_v_cm
+        self.Fdyn_j_m = self.Fdyn_v_m * self.q
+        self.Fdyn_j = np.vectorize(lambda z: (self.device.x_m[0] - z) * self.Fdyn_j_m)(self.device.x_m)
+        self.Fdyn_ev = self.Fdyn_j / self.ev
+        self.Fdyn_au = self.Fdyn_ev / self.au2ev
+        
+        self.omega_au = self.energy_ex_au / self.hbar_au
+        exp_t = np.exp(- 0.5j * (2 * np.pi * self.device.k_au) ** 2 * self.dt_au / self.device.m_eff)
+        self.PSI = self.device.state_0
+        self.j_t = []
+
+        self.t_grid_au = np.linspace(0.0, self.T_au, int(self.T_au / self.dt_au))
+        
+        pb = self.points_before - 100
+        pa = self.points_after + 100
+
+        self.turn_dyn_on(ep_dyn=ep_dyn, energy=energy)
+        for i, t_au in enumerate(self.t_grid_au):
+            self.PSI = self.evolve_real(self.PSI, t=t_au)
+            
+            j_l = ((-0.5j/(self.device.m_eff[pb])) * (self.PSI[pb].conjugate() * (self.PSI[pb+1]-self.PSI[pb-1]) - self.PSI[pb] * (self.PSI[pb+1].conjugate()-self.PSI[pb-1].conjugate())) / (2*self.dx_au)).real
+            j_r = ((-0.5j/(self.device.m_eff[pa])) * (self.PSI[pa].conjugate() * (self.PSI[pa+1]-self.PSI[pa-1]) - self.PSI[pa] * (self.PSI[pa+1].conjugate()-self.PSI[pa-1].conjugate())) / (2*self.dx_au)).real
+
+            self.j_t.append(j_r-j_l)
+            #if i % 1000 == 0:
+            #    print(i)
+        
+        #plt.plot(self.t_grid_au, self.j_t)
+        #plt.show()
+        #return self.q * simps(self.j_t, self.t_grid_au) / self.T_au
+        return simps(self.j_t, self.t_grid_au) / self.T_au
+
     # internals
 
     def _set_dt(self, dt=None):
@@ -473,6 +702,24 @@ if __name__ == '__main__':
     system_properties = BarriersWellSandwich(5.0, 4.0, 5.0, 0.4, 0.2, 0.0, bias=0.0)
     
     #################### EIGENSTATES ###########################################
-    info = system_properties.time_evolution(imaginary=True, n=1, steps=20000).get_system_state(0)
-    eigenfunction, eigenvalue = info
-    print(eigenvalue)
+    info = system_properties.time_evolution(imaginary=True, n=3, steps=20000).get_system_states()
+    #eigenfunction, eigenvalue = info
+    #print(eigenvalue)
+    #pc = system_properties.photocurrent(energy=0.1, dt=5e-17)
+    #print(pc)
+    #pc = system_properties.photocurrent(energy=0.145, dt=5e-17)
+    #print(pc)
+
+    energies = np.linspace(0.1, 0.399, 300)
+    photocurrent = []
+    def get_pc(energy):
+        pc = system_properties.photocurrent(energy=energy, dt=5e-17, ep_dyn=5.0)
+        #photocurrent.append(pc)
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print("[%s] > Energy: %.6f eV, PC: %.6e " % (now, energy, pc))
+        return pc
+    
+    pool = Pool(processes=4)
+    photocurrent = pool.map(get_pc, energies)
+    plt.plot(energies, photocurrent)
+    plt.show()

@@ -8,9 +8,9 @@ It is a free software, use as you wish, and please share with me the issues you 
 
 ## Quantum well with double barrier for wavelength selection
 
-It is a Quantum Well surrounded by two barriers. The structure is made of $Al_{x}Ga_{1-x}As/GaAs$. It is possible to vary the barriers' length, as well as the well's length and the displacement between the barriers and the well.
+It is a Quantum Well surrounded by two barriers. The structure is made of <img src="https://latex.codecogs.com/gif.latex?Al_{x}Ga_{1-x}As/GaAs" />. It is possible to vary the barriers' length, as well as the well's length and the displacement between the barriers and the well.
 
-The structure is carried as a two dimensional bulk, with dimensions $L_x \sim \lambda_f \ll L_y, L_z$. Where $\lambda_f$ is the wavelength of the incident photons. It allows the system to be approached as a one dimension potential in the growth direction.
+The structure is carried as a two dimensional bulk, with dimensions <img src="L_x \sim \lambda_f \ll L_y, L_z" />. Where <img src="\lambda_f" /> is the wavelength of the incident photons. It allows the system to be approached as a one dimension potential in the growth direction.
 
 Such a device allows for narrow wavelength selection window. It is possible to simulate the photocurrent due to photons with different energies.
 

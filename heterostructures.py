@@ -26,6 +26,7 @@ from band_structure_database import Alloy, Database
 
 # very default values
 DEFAULT_DT = 1e-18 # seconds
+DEFAULT_N = 8192
 
 class HeteroStructure(object):
     """
@@ -48,7 +49,7 @@ class HeteroStructure(object):
     - Electric potential: `KV/cm`
     """
 
-    def __init__(self, N=8192):
+    def __init__(self, N=DEFAULT_N):
         """
         Parameters
         ----------
@@ -146,6 +147,42 @@ class HeteroStructure(object):
             the system's length!!
         """
         return self.device['working_{}'.format(n)]
+
+    def get_eigen_info(self, n):
+        """
+        return the nth (eigenfunction, eigenvalue) of the system
+
+        Parameters
+        ----------
+        n : integer
+            the eigenfunction's index
+        
+        Returns
+        -------
+        eigenfunction : tuple (DataFrame, float)
+            a DataFrame with the systems eigenfunction **corresponding** to
+            the system's length!! and the corresponding eigenvalue
+        """
+        return (self.device[['x_nm','state_{}'.format(n), 'm_eff']], \
+            self.values[n])
+
+    def get_potential_shape(self):
+        """
+        It return not only the potential, but also the spatial grid and the
+        effective masses along it
+
+        Returns
+        -------
+        potential_info : dict
+            the information about potential, spatial grid and effective masses
+
+        Examples
+        --------
+        >>> from specific_potentials import HeteroStructure
+        >>> generic = HeteroStructure(1024)
+        >>> generic.get_potential_shape()
+        """
+        return self.device[['x_nm', 'v_ev', 'm_eff']]
 
     # operations
 
@@ -613,13 +650,65 @@ class HeteroStructure(object):
             
         return self.q * simps(j_t, t_grid_au) / T_au
 
+    def wave_energy(self, psi):
+        """
+        Calculates the energy of an arbitrary wave in the system
+        it depends on how many eigenvalues/eigenfunctions are already calculated
+        since it is going to be a superposition
+
+        Parameters
+        ----------
+        psi : array_like
+            an arbitrary wave, fitting the system's size (number of points) and
+            corresponding to its spatial grid
+
+        Returns
+        -------
+        energ : float
+            the energy of the given wave in the current system
+        """
+        energy = 0.0
+        for i, value in enumerate(self.values):
+            state = self.device['state_{}'.format(i)]
+            state_st = state.conjugate()
+            an = simps(state_st * psi, self.device.x_au) / \
+                simps(state_st * state, self.device.x_au)
+            energy += (an.conjugate()*an)*value
+        return energy
+
 class BarriersWellSandwich(HeteroStructure):
     """
+    This class provides a device which simulates a AlGaAs/Ga quantum well 
+    surrounded by two barriers. The well and the barriers, as well as the
+    ground state potential are defined according to the concentration of Al.
     """
-    def __init__(self, b_l, d_l, w_l, b_x, d_x, w_x, N=None, bias=0.0, surround=2):
+
+    def __init__(self, b_l, d_l, w_l, b_x, d_x, w_x, \
+        N=DEFAULT_N, surround=2):
         """
+        Parameters
+        ----------
+        b_l : float
+            the barriers length in `nm`
+        d_l : float
+            the displacement length between barriers and the well in `nm`
+        w_l : float
+            the well length in `nm`
+        b_x : float
+            the Al concentration in the barrier
+        d_x : float
+            the Al concentration in the displacement
+        w_x : float
+            the Al concentration in the well
+        N : integer
+            the number of points in the grid, the default id N = 8192
+        surround : integer
+            the core is composed of two barriers surrounding a well, with a
+            displacement between the barriers and the well in both sides
+            the `surround` is how many lengths equal to the core's length will
+            be surrounding the core on each side
         """
-        super(BarriersWellSandwich,self).__init__()
+        super(BarriersWellSandwich,self).__init__(N=N)
 
         self.b_l_nm = b_l
         self.d_l_nm = d_l
@@ -631,7 +720,7 @@ class BarriersWellSandwich(HeteroStructure):
         self.conduction_pct = 0.6
         self.valence_pct = 0.4
 
-        self.core_length_nm = 2*b_l+2*d_l+w_l
+        self.core_length_nm = 2 * b_l + 2 * d_l + w_l
         self.surround_times = surround # on each side
 
         self.system_length_nm = (2*self.surround_times + 1)*self.core_length_nm
@@ -690,28 +779,72 @@ class BarriersWellSandwich(HeteroStructure):
 
         self.normalize_device()
 
+class FiniteQuantumWell(HeteroStructure):
+    """
+    This class provides a device that simulates a simple quantum well, with a
+    specific width and height
+    """
+
+    def __init__(self, wh, wl):
+        """
+        Parameters
+        ----------
+        wh : float
+            is the well hight in eV
+        wl : float
+            is the well length in nm
+        """
+        super(FiniteQuantumWell,self).__init__(N=8192)
+
+        self.wl = wl
+        self.wh = wh
+
+        self.surround_times = 75 # on each side
+        self.system_length_nm = (2*self.surround_times + 1) * wl
+        self.x_nm = np.linspace(-self.system_length_nm/2,\
+            self.system_length_nm/2, self.N)
+
+        self.pts = lambda l: int(l * float(self.N) / self.system_length_nm)
+        self.bulk_length_nm = (self.surround_times)*self.wl
+
+        # bulk
+        self.v_ev = self.pts(self.bulk_length_nm) * [wh]
+        self.m_eff = self.pts(self.bulk_length_nm) * [1.0]
+        # well
+        self.v_ev += self.pts(self.wl) * [0.0]
+        self.m_eff += self.pts(self.wl) * [1.0]
+        # bulk
+        self.v_ev += (self.N-len(self.v_ev)) * [wh]
+        self.m_eff += (self.N-len(self.m_eff)) * [1.0]
+
+        # transforming to numpy arrays
+        self.v_ev = np.array(self.v_ev)
+        self.m_eff = np.array(self.m_eff)
+
+        self.normalize_device()
+
 if __name__ == '__main__':
-    system_properties = BarriersWellSandwich(5.0, 4.0, 5.0, 0.4, 0.2, 0.0, bias=0.0)
+    system_properties = BarriersWellSandwich(5.0, 4.0, 5.0, 0.4, 0.2, 0.0)
     
     #################### EIGENSTATES ###########################################
     info = system_properties.time_evolution(imaginary=True, n=3, steps=20000).get_system_states()
     #eigenfunction, eigenvalue = info
     #print(eigenvalue)
-    pc = system_properties.photocurrent(energy=0.1, dt=5e-17)
-    print(pc)
-    pc = system_properties.photocurrent(energy=0.145, dt=5e-17)
-    print(pc)
+    #pc = system_properties.photocurrent(energy=0.1, dt=5e-17)
+    #print(pc)
+    #pc = system_properties.photocurrent(energy=0.145, dt=5e-17)
+    #print(pc)
 
-    #energies = np.linspace(0.1, 0.399, 300)
-    #photocurrent = []
-    #def get_pc(energy):
-    #    pc = system_properties.photocurrent(energy=energy, dt=5e-17, ep_dyn=5.0)
-    #    #photocurrent.append(pc)
-    #    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    #    print("[%s] > Energy: %.6f eV, PC: %.6e " % (now, energy, pc))
-    #    return pc
-    #
-    #pool = Pool(processes=4)
-    #photocurrent = pool.map(get_pc, energies)
-    #plt.plot(energies, photocurrent)
-    #plt.show()
+    energies = np.linspace(0.1, 0.399, 300)
+    photocurrent = []
+    def get_pc(energy):
+        pc = system_properties.photocurrent(energy=energy, dt=5e-17, ep_dyn=5.0)
+        #photocurrent.append(pc)
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print("[%s] > Energy: %.6f eV, PC: %.6e " % (now, energy, pc))
+        return pc
+    
+    pool = Pool(processes=4)
+    photocurrent = pool.map(get_pc, energies)
+    plt.plot(energies, photocurrent)
+    plt.show()

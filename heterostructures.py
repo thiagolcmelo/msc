@@ -187,7 +187,7 @@ class HeteroStructure(object):
     # operations
 
     def time_evolution(self, steps=2000, t0=0.0, \
-        dt=None, imaginary=False, n=3, save=True, load=True):
+        dt=None, imaginary=False, n=3, save=True, load=True, verbose=False):
         """
         This function will evolve the `system_waves` in time. It time is
         `imaginary`, then it will try to calculate the `n` first eigenvalues
@@ -251,6 +251,8 @@ class HeteroStructure(object):
                     self.device = device
                     n = len(self._eigen_names())
                     self.values = [self._eigen_value(i) for i in range(n)]
+                    if verbose:
+                        print('Using values from stored file')
                     return self
                 except:
                     pass
@@ -285,6 +287,8 @@ class HeteroStructure(object):
                         np.conjugate(self.device[sn]), self.device.x_au))
 
                 self.values[s] = self._eigen_value(s)
+                if verbose:
+                    print('E_{0} = {1:.6f} eV'.format(s, self.values[s]))
             
             if save:
                 if not os.path.exists(directory):

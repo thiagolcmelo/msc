@@ -1,28 +1,21 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-This module contains classes for simalating quantum heterostructures
+This module contains classes for simulating quantum heterostructures
 """
 
 import numpy as np
 import pandas as pd
 pd.options.mode.chained_assignment = None  # default='warn'
 
-import matplotlib.pyplot as plt
-import matplotlib.animation as animation
-import numpy as np
 from scipy.integrate import simps
 import scipy.constants as cte
 import scipy.special as sp
 from scipy.signal import gaussian
 from scipy.fftpack import fft, ifft, fftfreq
-from datetime import datetime
 from types import *
 
 import os, time, re
-from multiprocessing import Pool, TimeoutError
-
-from band_structure_database import Alloy, Database
 
 # very default values
 DEFAULT_DT = 1e-18 # seconds
@@ -647,12 +640,14 @@ class HeteroStructure(object):
 
         for i, t_au in enumerate(t_grid_au):
             psi = self.evolve_real(psi, t=t_au)
-            #psi = self.time_evolution(steps=1, t0=t_au*self.au_t).get_working(0)
-            j_l = ((-0.5j/(self.device.m_eff[pb])) * (psi[pb].conjugate() * (psi[pb+1]-psi[pb-1]) - psi[pb] * (psi[pb+1].conjugate()-psi[pb-1].conjugate())) / (2*self.dx_au)).real
-            j_r = ((-0.5j/(self.device.m_eff[pa])) * (psi[pa].conjugate() * (psi[pa+1]-psi[pa-1]) - psi[pa] * (psi[pa+1].conjugate()-psi[pa-1].conjugate())) / (2*self.dx_au)).real
+            #psi = self.time_evolution(steps=1, t0=t_au*self.au_t, dt=dt).get_working(0)
+            j_l = ((-0.5j/(self.device.m_eff[pb])) * (psi[pb].conjugate() * \
+                (psi[pb+1]-psi[pb-1]) - psi[pb] * (psi[pb+1].conjugate()-psi[pb-1].conjugate())) / (2*self.dx_au)).real
+            j_r = ((-0.5j/(self.device.m_eff[pa])) * (psi[pa].conjugate() * \
+                (psi[pa+1]-psi[pa-1]) - psi[pa] * (psi[pa+1].conjugate()-psi[pa-1].conjugate())) / (2*self.dx_au)).real
             j_t.append(j_r-j_l)
             
-        return self.q * simps(j_t, t_grid_au) / T_au
+        return self.q * (simps(j_t, t_grid_au) / T_au) / T
 
     def wave_energy(self, psi):
         """
@@ -679,176 +674,3 @@ class HeteroStructure(object):
                 simps(state_st * state, self.device.x_au)
             energy += (an.conjugate()*an)*value
         return energy
-
-class BarriersWellSandwich(HeteroStructure):
-    """
-    This class provides a device which simulates a AlGaAs/Ga quantum well 
-    surrounded by two barriers. The well and the barriers, as well as the
-    ground state potential are defined according to the concentration of Al.
-    """
-
-    def __init__(self, b_l, d_l, w_l, b_x, d_x, w_x, \
-        N=DEFAULT_N, surround=2):
-        """
-        Parameters
-        ----------
-        b_l : float
-            the barriers length in `nm`
-        d_l : float
-            the displacement length between barriers and the well in `nm`
-        w_l : float
-            the well length in `nm`
-        b_x : float
-            the Al concentration in the barrier
-        d_x : float
-            the Al concentration in the displacement
-        w_x : float
-            the Al concentration in the well
-        N : integer
-            the number of points in the grid, the default id N = 8192
-        surround : integer
-            the core is composed of two barriers surrounding a well, with a
-            displacement between the barriers and the well in both sides
-            the `surround` is how many lengths equal to the core's length will
-            be surrounding the core on each side
-        """
-        super(BarriersWellSandwich,self).__init__(N=N)
-
-        self.b_l_nm = b_l
-        self.d_l_nm = d_l
-        self.w_l_nm = w_l
-        self.b_x_nm = b_x
-        self.d_x_nm = d_x
-        self.w_x_nm = w_x
-
-        self.conduction_pct = 0.6
-        self.valence_pct = 0.4
-
-        self.core_length_nm = 2 * b_l + 2 * d_l + w_l
-        self.surround_times = surround # on each side
-
-        self.system_length_nm = (2*self.surround_times + 1)*self.core_length_nm
-        self.bulk_length_nm = (self.surround_times)*self.core_length_nm
-
-        # this function return the number of points for a given length in nm
-        self.pts = lambda l: int(l * float(self.N) / self.system_length_nm)
-
-        self.x_nm = np.linspace(-self.system_length_nm/2, \
-            self.system_length_nm/2, self.N)
-
-        self.barrier = Database(Alloy.AlGaAs, b_x)
-        self.span = Database(Alloy.AlGaAs, d_x)
-        self.well = Database(Alloy.AlGaAs, w_x)
-
-        span_cond_gap = self.conduction_pct * self.span.parameters('eg_0')
-        barrier_cond_gap = self.conduction_pct * self.barrier.parameters('eg_0')
-        well_cond_gap = self.conduction_pct * self.well.parameters('eg_0')
-        span_meff = self.span.effective_masses('m_e')
-        barrier_meff = self.barrier.effective_masses('m_e')
-        well_meff = self.well.effective_masses('m_e')
-        
-        # bulk
-        self.v_ev = self.pts(self.bulk_length_nm) * [span_cond_gap]
-        self.m_eff = self.pts(self.bulk_length_nm) * [span_meff]
-        self.points_before = len(self.v_ev)
-        # first barrier
-        self.v_ev += self.pts(b_l) * [barrier_cond_gap]
-        self.m_eff += self.pts(b_l) * [barrier_meff]
-        # first span
-        self.v_ev += self.pts(d_l) * [span_cond_gap]
-        self.m_eff += self.pts(d_l) * [span_meff]
-        # well
-        self.v_ev += self.pts(w_l) * [well_cond_gap]
-        self.m_eff += self.pts(w_l) * [well_meff]
-        # second span
-        self.v_ev += self.pts(d_l) * [span_cond_gap]
-        self.m_eff += self.pts(d_l) * [span_meff]
-        # second barrier
-        self.v_ev += self.pts(b_l) * [barrier_cond_gap]
-        self.m_eff += self.pts(b_l) * [barrier_meff]
-        self.points_after = len(self.v_ev)
-        # span after second barrier
-        self.v_ev += (self.N-len(self.v_ev)) * [span_cond_gap]
-        self.m_eff += (self.N-len(self.m_eff)) * [span_meff]
-
-        # shift zero to span potential
-        self.v_ev = np.asarray(self.v_ev) - span_cond_gap
-
-        # smooth the potential
-        smooth_frac = int(float(self.N) / 500.0)
-        self.v_ev = np.asarray([np.average(self.v_ev[max(0,i-smooth_frac):min(self.N-1,i+smooth_frac)]) for i in range(self.N)])
-
-        # use numpy arrays
-        self.m_eff = np.asarray(self.m_eff)
-
-        self.normalize_device()
-
-class FiniteQuantumWell(HeteroStructure):
-    """
-    This class provides a device that simulates a simple quantum well, with a
-    specific width and height
-    """
-
-    def __init__(self, wh, wl):
-        """
-        Parameters
-        ----------
-        wh : float
-            is the well hight in eV
-        wl : float
-            is the well length in nm
-        """
-        super(FiniteQuantumWell,self).__init__(N=8192)
-
-        self.wl = wl
-        self.wh = wh
-
-        self.surround_times = 75 # on each side
-        self.system_length_nm = (2*self.surround_times + 1) * wl
-        self.x_nm = np.linspace(-self.system_length_nm/2,\
-            self.system_length_nm/2, self.N)
-
-        self.pts = lambda l: int(l * float(self.N) / self.system_length_nm)
-        self.bulk_length_nm = (self.surround_times)*self.wl
-
-        # bulk
-        self.v_ev = self.pts(self.bulk_length_nm) * [wh]
-        self.m_eff = self.pts(self.bulk_length_nm) * [1.0]
-        # well
-        self.v_ev += self.pts(self.wl) * [0.0]
-        self.m_eff += self.pts(self.wl) * [1.0]
-        # bulk
-        self.v_ev += (self.N-len(self.v_ev)) * [wh]
-        self.m_eff += (self.N-len(self.m_eff)) * [1.0]
-
-        # transforming to numpy arrays
-        self.v_ev = np.array(self.v_ev)
-        self.m_eff = np.array(self.m_eff)
-
-        self.normalize_device()
-
-if __name__ == '__main__':
-    system_properties = BarriersWellSandwich(5.0, 4.0, 5.0, 0.4, 0.2, 0.0)
-    
-    #################### EIGENSTATES ###########################################
-    info = system_properties.time_evolution(imaginary=True, n=3, steps=20000).get_system_states()
-    #eigenfunction, eigenvalue = info
-    #print(eigenvalue)
-    #pc = system_properties.photocurrent(energy=0.1, dt=5e-17)
-    #print(pc)
-    #pc = system_properties.photocurrent(energy=0.145, dt=5e-17)
-    #print(pc)
-
-    energies = np.linspace(0.1, 0.399, 300)
-    photocurrent = []
-    def get_pc(energy):
-        pc = system_properties.photocurrent(energy=energy, dt=5e-17, ep_dyn=5.0)
-        #photocurrent.append(pc)
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print("[%s] > Energy: %.6f eV, PC: %.6e " % (now, energy, pc))
-        return pc
-    
-    pool = Pool(processes=4)
-    photocurrent = pool.map(get_pc, energies)
-    plt.plot(energies, photocurrent)
-    plt.show()

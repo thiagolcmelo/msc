@@ -122,7 +122,8 @@ class HeteroStructure(object):
             of float with the corresponding eigenstates
         """
         working = self._working_names()
-        return (self.device[['x_nm']+working], self.values)
+        eigen = self._eigen_names()
+        return (self.device[['x_nm']+eigen+working], self.values)
 
     def get_working(self, n):
         """

@@ -86,5 +86,7 @@ plt.show()
 
 ## References
 
+- M.  H.  DEGANI  and  M.  Z.  MAIALLE.Numerical  calculations  of  quantumstates in semiconductor nanostructures.Journal  of  Computational  and  TheoreticalNanoscience, 7:454–473, 2010.
+- M.  H.  DEGANI,  M.  Z.  MAIALLE,  and  FARINAS  P.  F.  STUDART  N.   Infraredphotocurrent  with  one-  and  two-photon  absorptions  in  a  double-barrier  quantumwell system.J. Appl. Phys., 110, 2011.
 - Chuang, S. L. (1995). Physics of optoelectronic devices. New York: Wiley. Appendix K: tables K.2 and K.3
 - Mitin, V. V, V. A Kochelap, and Michael A Stroscio. Quantum Heterostructures : Microelectronics and Optoelectronics. Cambridge: Cambridge University Press, 1999.

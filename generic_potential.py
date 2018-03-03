@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-This module contains classes for simulating quantum heterostructures
+This module contains classes for simulating generic potentials
 """
 
 import numpy as np
@@ -13,27 +13,27 @@ import scipy.constants as cte
 import scipy.special as sp
 from scipy.signal import gaussian
 from scipy.fftpack import fft, ifft, fftfreq
-from types import *
+from types import LambdaType
 
 import os, time, re
 
 # very default values
-DEFAULT_DT = 1e-18 # seconds
+DEFAULT_DT = 1e-19 # seconds
 DEFAULT_N = 8192
 
-class HeteroStructure(object):
+class GenericPotential(object):
     """
-    This class provides a basic framework for simulating an heterostructure
-    based on its building properties: layers composition, materials used,
-    sizes, room temperature
+    This class provides a basic framework for simulating an 
+    heterostructure based on its building properties: layers 
+    composition, materials used, sizes, room temperature
 
     It is possible to calculate:
     - eigenvalues and eigenfunctions
     - evolve waves in time under potential influence
     - calculate properties like photocurrent, transmission, reflextion
 
-    The default potential is a Quantum Harmoic Oscillator for a wave length
-    of 8.1 µm
+    The default potential is a Quantum Harmoic Oscillator for a wave 
+    length of 8.1 µm
 
     The inputs must always be in:
     - Energy: `eV`
@@ -51,8 +51,8 @@ class HeteroStructure(object):
 
         Examples
         --------
-        >>> from heterostructures import HeteroStructure
-        >>> device = HeteroStructure(1024)
+        >>> from generic_potential import GenericPotential
+        >>> device = GenericPotential(1024)
         """
 
         # default grid size
@@ -106,10 +106,11 @@ class HeteroStructure(object):
         Returns
         -------
         info : tuple(DataFrame, float)
-            a tuple consisting of a DataFrame with the eigenstate and a float
-            with the eigenvalue
+            a tuple consisting of a DataFrame with the eigenstate and 
+            a float with the eigenvalue
         """
-        return (self.device[['x_nm','state_{}'.format(n)]], self.values[n])
+        return (self.device[['x_nm','state_{}'.format(n)]], \
+            self.values[n])
     
     def get_system_states(self):
         """
@@ -118,8 +119,8 @@ class HeteroStructure(object):
         Returns
         -------
         info : tuple(DataFrame, array_like)
-            a tuple consisting of a DataFrame with the eigenstates and an array
-            of float with the corresponding eigenstates
+            a tuple consisting of a DataFrame with the eigenstates and 
+            an array of float with the corresponding eigenstates
         """
         working = self._working_names()
         eigen = self._eigen_names()
@@ -154,26 +155,28 @@ class HeteroStructure(object):
         Returns
         -------
         eigenfunction : tuple (DataFrame, float)
-            a DataFrame with the systems eigenfunction **corresponding** to
-            the system's length!! and the corresponding eigenvalue
+            a DataFrame with the systems eigenfunction 
+            **corresponding** to the system's length!! and the 
+            corresponding eigenvalue
         """
         return (self.device[['x_nm','state_{}'.format(n), 'm_eff']], \
             self.values[n])
 
     def get_potential_shape(self):
         """
-        It return not only the potential, but also the spatial grid and the
-        effective masses along it
+        It return not only the potential, but also the spatial grid 
+        and the effective masses along it
 
         Returns
         -------
         potential_info : dict
-            the information about potential, spatial grid and effective masses
+            the information about potential, spatial grid and effective 
+            masses
 
         Examples
         --------
-        >>> from specific_potentials import HeteroStructure
-        >>> generic = HeteroStructure(1024)
+        >>> from specific_potentials import GenericPotential
+        >>> generic = GenericPotential(1024)
         >>> generic.get_potential_shape()
         """
         return self.device[['x_nm', 'v_ev', 'm_eff']]
@@ -181,11 +184,12 @@ class HeteroStructure(object):
     # operations
 
     def time_evolution(self, steps=2000, t0=0.0, \
-        dt=None, imaginary=False, n=3, save=True, load=True, verbose=False):
+        dt=None, imaginary=False, n=3, save=True, \
+        load=True, verbose=False):
         """
-        This function will evolve the `system_waves` in time. It time is
-        `imaginary`, then it will try to calculate the `n` first eigenvalues
-        and eigenstates of the system.
+        This function will evolve the `system_waves` in time. 
+        It time is `imaginary`, then it will try to calculate the 
+        `n` first eigenvalues and eigenstates of the system.
 
         Parameters
         ----------
@@ -193,27 +197,29 @@ class HeteroStructure(object):
             the number of time steps to evolve the system
         t0 : float
             if the start time, useful when working with time dependent 
-            potentials, it must be in seconds. **It will be used only for real
-            time evolution**
+            potentials, it must be in seconds. **It will be used only 
+            for real time evolution**
         dt : float
-            the increment in time in **seconds** for each step, the default is 
-            the system's default `dt` which is DEFAULT_DT.
+            the increment in time in **seconds** for each step, the 
+            default is the system's default `dt` which is DEFAULT_DT.
         imaginary : boolean
-            *False* stands for not imaginary time evolution, while *True* stands
-            for the opposite
+            *False* stands for not imaginary time evolution, while 
+            *True* stands for the opposite
         n : integer
-            the number of eigenvalues and eigenstates to be calculated in case
-            of imaginary time evolution, the edfault is `3`
+            the number of eigenvalues and eigenstates to be calculated 
+            in case of imaginary time evolution, the edfault is `3`
         save : boolean
-            whether to save the results of an imaginary evolution, which means
-            save the eigenstates for further using. The eigenstates will be
-            saved in a file at the folder `eigenfunction`
+            whether to save the results of an imaginary evolution, 
+            which means save the eigenstates for further using. The 
+            eigenstates will be saved in a file at the folder 
+            `eigenfunction`
         load : boolean
             use stored eigenstates when available
         Returns
         -------
-        self : HeteroStructure
-            the current GenericPotential object for further use in chain calls
+        self : GenericPotential
+            the current GenericPotential object for further use in 
+            chain calls
         """
         
         if imaginary:
@@ -229,8 +235,9 @@ class HeteroStructure(object):
             except:
                 fdyn = 0.0
 
-            filename = "{cn}_{n}_{sts}_{bias:.2f}_{dyn:.2f}.csv".format( \
-                cn=self.__class__.__name__, n=n, sts=steps, bias=fst, dyn=fdyn)
+            filename = "{cn}_{n}_{sts}_{bias:.2f}_{dyn:.2f}.csv"
+            filename = filename.format(cn=self.__class__.__name__, \
+                n=n, sts=steps, bias=fst, dyn=fdyn)
             directory = "devices"
             full_filename = os.path.join(directory, filename)
 
@@ -238,13 +245,14 @@ class HeteroStructure(object):
                 try:
                     device = pd.read_csv(full_filename)
                     complex_cols = [c for c in device.columns \
-                        if re.match('^.*_\d+$', c)]
+                        if re.match(r"^.*_\d+$", c)]
                     for c in complex_cols:
-                        device[c] = device[c].str.replace('i','j').apply(\
-                            lambda x: np.complex(x))
+                        device[c] = device[c].str.replace('i','j'\
+                            ).apply(lambda x: np.complex(x))
                     self.device = device
                     n = len(self._eigen_names())
-                    self.values = [self._eigen_value(i) for i in range(n)]
+                    self.values = [self._eigen_value(i) for i in \
+                        range(n)]
                     if verbose:
                         print('Using values from stored file')
                     return self
@@ -255,7 +263,8 @@ class HeteroStructure(object):
             self.values = np.zeros(n, dtype=np.complex_)
 
             # create kickstart states
-            # they consist of legendre polinomials modulated by a gaussian
+            # they consist of legendre polinomials modulated by a 
+            # gaussian
             short_grid = np.linspace(-1, 1, self.N)
             g = gaussian(self.N, std=int(self.N/100))
             states = np.array([g * sp.legendre(i)(short_grid) \
@@ -266,23 +275,26 @@ class HeteroStructure(object):
             for s in range(n):
                 sn = 'state_{}'.format(s)
                 for t in range(steps):
-                    self.device[sn] = self.evolve_imag(self.device[sn], \
-                        t * self.dt_au)
+                    self.device[sn] = self.evolve_imag(\
+                        self.device[sn], t * self.dt_au)
 
                     # gram-shimdt
                     for m in range(s):
                         sm = 'state_{}'.format(m)
                         proj = simps(self.device[sn] * \
-                            np.conjugate(self.device[sm]), self.device.x_au)
+                            np.conjugate(self.device[sm]), \
+                            self.device.x_au)
                         self.device[sn] -= proj * self.device[sm]
 
                     # normalize
                     self.device[sn] /= np.sqrt(simps(self.device[sn] * \
-                        np.conjugate(self.device[sn]), self.device.x_au))
+                        np.conjugate(self.device[sn]), \
+                            self.device.x_au))
 
                 self.values[s] = self._eigen_value(s)
                 if verbose:
-                    print('E_{0} = {1:.6f} eV'.format(s, self.values[s]))
+                    print('E_{0} = {1:.6f} eV'.format(s, \
+                        self.values[s]))
             
             if save:
                 if not os.path.exists(directory):
@@ -300,13 +312,14 @@ class HeteroStructure(object):
 
     def normalize_device(self):
         """
-        This function apply changes in the device structure or in external
-        conditions to the main `device` object
+        This function apply changes in the device structure or in 
+        external conditions to the main `device` object
 
         Returns
         -------
-        self : HeteroStructure
-            the current HeteroStructure object for further use in chain calls
+        self : GenericPotential
+            the current GenericPotential object for further use in 
+            chain calls
         """
         try:
             device = self.device
@@ -327,7 +340,7 @@ class HeteroStructure(object):
 
         # static potential (ti = time independent)
         device['v_j'] = device.v_ev * self.ev # ev to j
-        device['v_au_ti'] = device['v_au'] = device.v_j / self.au_e # j to au
+        device['v_au_ti'] = device['v_au'] = device.v_j / self.au_e
 
         # check whether there is any bias to apply
         try:
@@ -341,20 +354,21 @@ class HeteroStructure(object):
         # check whether there is any dynamic field to apply
         try:
             # v_au_td >> time dependent
-            assert self.v_au_td and isinstance(self.v_au_td, LambdaType)
-            self.v_au_full = lambda t: self.device.v_au_ti + self.v_au_td(t)
+            assert self.v_au_td and isinstance(self.v_au_td,LambdaType)
+            self.v_au_full = lambda t: self.device.v_au_ti + \
+                self.v_au_td(t)
         except:
             self.v_au_full = lambda t: self.device.v_au_ti
 
         # imaginary time propagators
-        exp_v2_i = lambda t: np.exp(- 0.5 * self.v_au_full(t) * self.dt_au)
+        exp_v2_i = lambda t: np.exp(-0.5*self.v_au_full(t)*self.dt_au)
         exp_t_i = np.exp(- 0.5 * (2 * np.pi * self.device.k_au) ** 2 * \
             self.dt_au / self.m_eff)
         self.evolve_imag = lambda psi, t: exp_v2_i(t) * ifft(exp_t_i * \
             fft(exp_v2_i(t) * psi))
 
         # normal propagators
-        exp_v2 = lambda t: np.exp(- 0.5j * self.v_au_full(t) * self.dt_au)
+        exp_v2 = lambda t: np.exp(-0.5j*self.v_au_full(t)*self.dt_au)
         exp_t = np.exp(- 0.5j * (2 * np.pi * self.device.k_au) ** 2 * \
             self.dt_au / self.m_eff)
         self.evolve_real = lambda psi, t: exp_v2(t) * ifft(exp_t * \
@@ -364,24 +378,25 @@ class HeteroStructure(object):
 
     def turn_bias_on(self, bias, core_only=False):
         """
-        this function applies a static bias accross the system, the `bias` must
-        be given in KV/cm, God knows why...
+        this function applies a static bias accross the system, the 
+        `bias` must be given in KV/cm, God knows why...
 
-        if the `core_only` is true, the bias is not applied to the span that
-        surrounds the system under study
+        if the `core_only` is true, the bias is not applied to the span 
+        that surrounds the system under study
 
         Parameters
         ----------
         bias : float
             the bias in KV/cm
         core_only : boolean
-            whether to apply the bias in the whole system or only in the
-            core under study and not in the span/bulk area
+            whether to apply the bias in the whole system or only in 
+            the core under study and not in the span/bulk area
 
         Returns
         -------
-        self : HeteroStructure
-            the current GenericPotential object for further use in chain calls
+        self : GenericPotential
+            the current GenericPotential object for further use in 
+            chain calls
         """
         self.bias_raw = bias
         self.bias_v_cm = bias * 1000.0
@@ -397,11 +412,12 @@ class HeteroStructure(object):
                     return (self.device.x_m[self.points_before] - z) * \
                         self.bias_j_m
                 else:
-                    return -self.device.x_m[self.points_after] * self.bias_j_m
+                    return -self.device.x_m[self.points_after] * \
+                        self.bias_j_m
             self.bias_j = np.vectorize(bias_shape)(self.device.x_m)
         else:
             self.bias_j = np.vectorize(lambda z: \
-                (self.device.x_m[0] - z) * self.bias_j_m)(self.device.x_m)
+                (self.device.x_m[0]-z)*self.bias_j_m)(self.device.x_m)
         
         self.bias_ev = self.bias_j / self.ev
         self.bias_au = self.bias_ev / self.au2ev
@@ -414,8 +430,9 @@ class HeteroStructure(object):
 
         Returns
         -------
-        self : HeteroStructure
-            the current GenericPotential object for further use in chain calls
+        self : GenericPotential
+            the current GenericPotential object for further use in 
+            chain calls
         """
         self.bias_au = None
         return self.normalize_device()
@@ -423,10 +440,11 @@ class HeteroStructure(object):
     def turn_dyn_on(self, ep_dyn, w_len=8.1e-6, f=None, \
         energy=None, core_only=False):
         """
-        this function applies a sine wave like an electric field to the system
+        this function applies a sine wave like an electric field to 
+        the system
 
-        if the `core_only` is true, the bias is not applied to the span that
-        surrounds the system under study
+        if the `core_only` is true, the bias is not applied to the 
+        span that surrounds the system under study
 
         Parameters
         ----------
@@ -437,15 +455,17 @@ class HeteroStructure(object):
         f : float
             the electric field frequency in Hz
         energy : float
-            the wave's energy in eV where it is going to be used `E = hbar * w`
+            the wave's energy in eV where it is going to be used 
+            `E = hbar * w`
         core_only : boolean
-            whether to apply the bias in the whole system or only in the
-            core under study and not in the span/bulk area
+            whether to apply the bias in the whole system or only in 
+            the core under study and not in the span/bulk area
 
         Returns
         -------
-        self : HeteroStructure
-            the current GenericPotential object for further use in chain calls
+        self : GenericPotential
+            the current GenericPotential object for further use in 
+            chain calls
         """
         self.ep_dyn_raw = ep_dyn
 
@@ -453,8 +473,8 @@ class HeteroStructure(object):
         self.ep_dyn_v_cm = ep_dyn * 1000.0
         self.ep_dyn_v_m = 100.0 * self.ep_dyn_v_cm
         self.ep_dyn_j_m = self.ep_dyn_v_m * self.q
-        self.ep_dyn_j = np.vectorize(lambda z: (self.device.x_m[0] - z) * \
-            self.ep_dyn_j_m)(self.device.x_m)
+        self.ep_dyn_j = np.vectorize(lambda z: \
+            (self.device.x_m[0]-z) * self.ep_dyn_j_m)(self.device.x_m)
         self.ep_dyn_ev = self.ep_dyn_j / self.ev
         self.ep_dyn_au = self.ep_dyn_ev / self.au2ev
 
@@ -469,7 +489,7 @@ class HeteroStructure(object):
             raise Exception("""It must be informed one of the following: 
                 wave energy, wave frequency, or wave length""")
         
-        self.v_au_td = lambda t: self.ep_dyn_au * np.sin(self.omega_au * t)
+        self.v_au_td = lambda t: self.ep_dyn_au*np.sin(self.omega_au*t)
         return self.normalize_device()
 
     def turn_dyn_off(self):
@@ -478,8 +498,9 @@ class HeteroStructure(object):
 
         Returns
         -------
-        self : HeteroStructure
-            the current GenericPotential object for further use in chain calls
+        self : GenericPotential
+            the current GenericPotential object for further use in 
+            chain calls
         """
         self.v_au_td = None
         return self.normalize_device()
@@ -497,8 +518,9 @@ class HeteroStructure(object):
 
         Returns
         -------
-        self : HeteroStructure
-            the current GenericPotential object for further use in chain calls
+        self : GenericPotential
+            the current GenericPotential object for further use in 
+            chain calls
         """
 
         # erase working waves
@@ -520,8 +542,9 @@ class HeteroStructure(object):
 
     def _set_dt(self, dt=None):
         """
-        this function might be used for setting the default time increment
-        if *None* is given, then it will assume the value of `DEFAULT_DT`
+        this function might be used for setting the default time 
+        increment if *None* is given, then it will assume the value 
+        of `DEFAULT_DT`
 
         Parameters
         ----------
@@ -530,8 +553,9 @@ class HeteroStructure(object):
 
         Returns
         -------
-        self : HeteroStructure
-            the current GenericPotential object for further use in chain calls
+        self : GenericPotential
+            the current GenericPotential object for further use in 
+            chain calls
         """
         self.dt = dt or DEFAULT_DT
         self.dt_au = self.dt / self.au_t
@@ -547,7 +571,8 @@ class HeteroStructure(object):
         n : integer
             the eigenstate index
         t : float
-            the time in atomic units, for use in time dependent potentials
+            the time in atomic units, for use in time dependent 
+            potentials
 
         Returns
         -------
@@ -572,8 +597,9 @@ class HeteroStructure(object):
         device[sn_st] = np.conjugate(device[sn])
 
         # <Psi|H|Psi>
-        p_h_p = simps(device[sn_st] * (-0.5 * device[sn_d2] / device['m_eff'] \
-            + self.v_au_full(t)[1:-1] * device[sn]), device['x_au'])
+        p_h_p = simps(device[sn_st] * (-0.5 * device[sn_d2] / \
+            device['m_eff'] + self.v_au_full(t)[1:-1] * device[sn]), \
+            device['x_au'])
         # / <Psi|Psi> because I trust no one
         p_h_p /= simps(device[sn_st] * device[sn], device['x_au'])
 
@@ -581,30 +607,32 @@ class HeteroStructure(object):
 
     def _eigen_names(self):
         """
-        it returns the name of the columns where the eigenstates are stored in
-        the main device
+        it returns the name of the columns where the eigenstates are 
+        stored in the main device
 
         Returns
         -------
         names : array_like
-            the names of the columns in the device where eigenstates are stored
+            the names of the columns in the device where eigenstates 
+            are stored
         """
         cols = self.device.columns
-        return sorted([c for c in cols if re.match('^state_\d+$', c)])
+        return sorted([c for c in cols if re.match(r"^state_\d+$", c)])
 
     def _working_names(self):
         """
-        it returns the name of the columns where the working waves are stored in
-        the main device
+        it returns the name of the columns where the working waves are 
+        stored in  the main device
 
         Returns
         -------
         names : array_like
-            the names of the columns in the device where working waves are
-            stored
+            the names of the columns in the device where working waves 
+            are stored
         """
         cols = self.device.columns
-        return sorted([c for c in cols if re.match('^working_\d+$', c)])
+        return sorted([c for c in cols if \
+            re.match(r"^working_\d+$", c)])
 
     # miscellaneous and legacy
 
@@ -617,7 +645,8 @@ class HeteroStructure(object):
         energy : float
             the energy of incident photons in eV
         T : float
-            the total time for measuring the electric current in seconds
+            the total time for measuring the electric current 
+            in seconds
         ep_dyn : float
             the intensity of the 
 
@@ -639,13 +668,16 @@ class HeteroStructure(object):
         
         psi = self.work_on(0).get_working(0)
 
-        for i, t_au in enumerate(t_grid_au):
+        for t_au in t_grid_au:
             psi = self.evolve_real(psi, t=t_au)
-            #psi = self.time_evolution(steps=1, t0=t_au*self.au_t, dt=dt).get_working(0)
-            j_l = ((-0.5j/(self.device.m_eff[pb])) * (psi[pb].conjugate() * \
-                (psi[pb+1]-psi[pb-1]) - psi[pb] * (psi[pb+1].conjugate()-psi[pb-1].conjugate())) / (2*self.dx_au)).real
-            j_r = ((-0.5j/(self.device.m_eff[pa])) * (psi[pa].conjugate() * \
-                (psi[pa+1]-psi[pa-1]) - psi[pa] * (psi[pa+1].conjugate()-psi[pa-1].conjugate())) / (2*self.dx_au)).real
+            j_l = ((-0.5j/(self.device.m_eff[pb])) * \
+                (psi[pb].conjugate() * \
+                (psi[pb+1]-psi[pb-1])-psi[pb]*(psi[pb+1].conjugate()-\
+                psi[pb-1].conjugate())) / (2*self.dx_au)).real
+            j_r = ((-0.5j/(self.device.m_eff[pa])) * \
+                (psi[pa].conjugate() * \
+                (psi[pa+1]-psi[pa-1])-psi[pa]*(psi[pa+1].conjugate()-\
+                psi[pa-1].conjugate())) / (2*self.dx_au)).real
             j_t.append(j_r-j_l)
             
         return self.q * (simps(j_t, t_grid_au) / T_au) / T
@@ -653,14 +685,14 @@ class HeteroStructure(object):
     def wave_energy(self, psi):
         """
         Calculates the energy of an arbitrary wave in the system
-        it depends on how many eigenvalues/eigenfunctions are already calculated
-        since it is going to be a superposition
+        it depends on how many eigenvalues/eigenfunctions are already 
+        calculated since it is going to be a superposition
 
         Parameters
         ----------
         psi : array_like
-            an arbitrary wave, fitting the system's size (number of points) and
-            corresponding to its spatial grid
+            an arbitrary wave, fitting the system's size (number of 
+            points) and corresponding to its spatial grid
 
         Returns
         -------

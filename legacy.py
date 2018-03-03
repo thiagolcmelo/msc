@@ -14,7 +14,7 @@ import scipy.special as sp
 from scipy.signal import gaussian
 from scipy.fftpack import fft, ifft, fftfreq
 from datetime import datetime
-from types import *
+from types import LambdaType
 
 import os, time
 from multiprocessing import Pool, TimeoutError
@@ -650,7 +650,7 @@ class GenericPotential(object):
 
             pulse_height = np.ptp(self.v_ev) / 5
             start_norm = np.ptp(self.pulse*self.pulse.conjugate())
-            fake_e0 = self.pulse_E_ev
+            #fake_e0 = self.pulse_E_ev
 
             visual_pulse = lambda p: pulse_height * p*p.conjugate() / start_norm + 0.05#fake_e0
             #visual_pulse = lambda p: p*p.conjugate()
@@ -691,13 +691,14 @@ class GenericPotential(object):
             def init():
                 line.set_ydata(np.ma.array(self.x_nm, mask=True))
                 return line,
-            ani = animation.FuncAnimation(fig, animate, np.arange(1, 200), init_func=init, interval=25, blit=True)
+            #ani = animation.FuncAnimation(fig, animate, np.arange(1, 200), init_func=init, interval=25, blit=True)
+            animation.FuncAnimation(fig, animate, np.arange(1, 200), init_func=init, interval=25, blit=True)
             plt.show()
 
             # self.pulse /= np.sqrt(simps(self.pulse * np.conjugate(self.pulse), self.x_au))
 
         else:
-            for t in range(steps):
+            for _ in range(steps):
                 self.pulse = evolve_once(self.pulse)
                 #self.refle = (simps(self.pulse[:pb]*self.pulse.conjugate()[:pb], self.x_au[:pb])/total).real
                 self.trans = (simps(self.pulse[pa:]*self.pulse.conjugate()[pa:], self.x_au[pa:])/total).real
@@ -792,7 +793,7 @@ class GenericPotential(object):
         pb = self.points_before - 100
         pa = self.points_after + 100
 
-        for i, t_au in enumerate(self.t_grid_au):
+        for _, t_au in enumerate(self.t_grid_au):
             #exp_v2 = np.exp(- 0.5j * (self.v_au + self.v_au_abs + self.ep_dyn_au * np.sin(self.omega_au*t_au)) * self.dt_au)
             exp_v2 = np.exp(- 0.5j * (self.v_au + self.ep_dyn_au * np.sin(self.omega_au*t_au)) * self.dt_au)
             evolve_once = lambda psi: exp_v2 * ifft(exp_t * fft(exp_v2 * psi))
@@ -1011,7 +1012,7 @@ class MultiQuantumWell(GenericPotential):
 
         self.v_ev = []
         self.m_eff = []
-        for i in range(self.w_n):
+        for _ in range(self.w_n):
             self.v_ev += self.pts(self.w_l) * [barrier_cond_gap]
             self.m_eff += self.pts(self.w_l) * [barrier_meff]
             self.v_ev += self.pts(self.w_l) * [well_cond_gap]

@@ -6,9 +6,9 @@ This module contains classes for simulating generic devices
 
 import numpy as np
 
-from heterostructures import HeteroStructure
+from generic_potential import GenericPotential
 
-class FiniteQuantumWell(HeteroStructure):
+class FiniteQuantumWell(GenericPotential):
     """
     This class provides a device that simulates a simple quantum well, with a
     specific width and height

@@ -7,10 +7,10 @@ in  AlGaAs/GaAs devices
 
 import numpy as np
 
-from heterostructures import HeteroStructure
+from generic_potential import GenericPotential
 from band_structure_database import Alloy, Database
 
-class BarriersWellSandwich(HeteroStructure):
+class BarriersWellSandwich(GenericPotential):
     """
     This class provides a device which simulates a AlGaAs/Ga quantum well 
     surrounded by two barriers. The well and the barriers, as well as the

@@ -1,4 +1,4 @@
-# Heterosctructures Properties Calculations
+# Quantum Solver
 
 This repository contains modules for calculating properties of quantum heterostructures.
 
@@ -21,7 +21,7 @@ Varying the well's length, as well as the barriers' and the displacement's lengt
 We simulate a device with barriers of 5nm surrounding a well with 5nm also, displaced by 4nm. The barriers Aluminum concentration is 0.4, while the displacement's is 0.2 and well's is 0.0.
 
 ```python
->>> from algaas import BarriersWellSandwich
+>>> from lib.algaas import BarriersWellSandwich
 >>> device = BarriersWellSandwich(b_l=5.0, d_l=4.0, w_l=5.0, b_x=0.4, d_x=0.2, w_x=0.0)
 >>> info = device.turn_bias_on(bias=5, core_only=True).time_evolution(imaginary=True, n=3, steps=20000).get_system_states()
 >>> info[1] # eigenvalues in eV
@@ -50,6 +50,7 @@ We simulate a device with barriers of 5nm surrounding a well with 5nm also, disp
 4  (-1.16522066794e-12-1.96231767182e-12j)
 >>> print("Average values:")
 Average values:
+>>> from scipy.integrate import simps
 >>> for i in range(3): # average x
 >>>     pxp = simps(np.conjugate(_device['state_{0}'.format(i)]) * _device['x_nm'] * _device['state_{0}'.format(i)], _device['x_nm'])
 >>>     print('<{0}|x|{0}> = {1:.6f} nm, (total system length = {2:.6f} nm)'.format(i, pxp.real, np.ptp(_device.x_nm)))

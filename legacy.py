@@ -19,7 +19,7 @@ from types import LambdaType
 import os, time
 from multiprocessing import Pool, TimeoutError
 
-from band_structure_database import Alloy, Database
+from lib.band_structure_database import Alloy, Database
 
 
 # very default values

@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from lib.algaas import BarriersWellSandwich
+from solvers.algaas import BarriersWellSandwich
 
 quantum_well = BarriersWellSandwich(b_l=1, d_l=1, w_l=10, 
                                     b_x=0.4, d_x=0.4, w_x=0.0, 

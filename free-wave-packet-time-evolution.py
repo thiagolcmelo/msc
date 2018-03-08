@@ -27,7 +27,7 @@ from scipy.spatial.distance import cdist
 from sklearn.preprocessing import StandardScaler
 
 # our libraries
-from lib.free_wave_packet import FreeWavePacket
+from solvers.free_wave_packet import FreeWavePacket
 
 # initialize particle and combinations of interest
 methods = ['pe', 'cn', 'rk']

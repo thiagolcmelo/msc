@@ -187,7 +187,8 @@ class GenericPotential(object):
 
     # operations
 
-    def calculate_eigenstates(self, n=1, precision=1e-4, dt=1e-19):
+    def calculate_eigenstates(self, n=1, precision=1e-4, 
+            dt=1e-19, method='pe'):
         """
         This function will generate the first `n` eigenvalues and
         eigenstates.
@@ -209,6 +210,7 @@ class GenericPotential(object):
         """
         # imaginary time
         self._set_dt(-1j * dt)
+        self.normalize_device(method=method)
 
         # creates numpy arrays for hold the calculated values
         self.values = np.zeros(n, dtype=np.complex_)

@@ -10,6 +10,47 @@ import numpy as np
 from .generic_potential import GenericPotential
 from .band_structure_database import Alloy, Database
 
+class BarriersWellSandwichDegani(GenericPotential):
+    """[summary]
+    
+    Arguments:
+        GenericPotential {[type]} -- [description]
+    """
+
+    def __init__(self, N=4096):
+        super(BarriersWellSandwichDegani, self).__init__(N=N)
+        L         = 1000.0
+        z_ang     = np.linspace(-L/2, L/2, N)
+        g_algaas  = lambda x: 0.0 if x == 0.2 else (0.185897 if x == 0.4 else -0.185897)
+        m_algaas  = lambda x: 0.067 # effective mass
+        xd        = 0.2 # displacement
+        xb        = 0.4 # barrier
+        xw        = 0.0 # well
+        wl        = 50.0 # Angstrom
+        bl        = 50.0 # Angstrom
+        dl        = 40.0 # Angstrom
+        
+        def x_shape(z):
+            if np.abs(z) < wl/2:
+                return xw
+            elif np.abs(z) < wl/2+dl:
+                return xd
+            elif np.abs(z) < wl/2+dl+bl:
+                return xb
+            return xd
+
+        V         = np.vectorize(lambda z: g_algaas(x_shape(z)))(z_ang)
+        V        -= g_algaas(xd)
+        meff      = np.vectorize(lambda z: m_algaas(xw))(z_ang)
+
+        # use numpy arrays
+        self.v_ev  = np.array(V)
+        self.m_eff = np.array(meff)
+        self.z_nm  = np.array(z_ang) / 10.0
+
+        self.normalize_device()
+
+
 class BarriersWellSandwich(GenericPotential):
     """
     This class provides a device which simulates a AlGaAs/Ga quantum 

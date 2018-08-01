@@ -129,7 +129,8 @@ class GenericPotential(object):
         """
         working = self._working_names()
         eigen   = self._eigen_names()
-        return (self.device[['z_nm']+eigen+working], self.values)
+        other   = ['v_ev', 'm_eff']
+        return (self.device[['z_nm']+eigen+working+other], self.values)
 
     def get_working(self, n):
         """
@@ -187,7 +188,7 @@ class GenericPotential(object):
 
     # almost independent
 
-    def orthonormal(self, n=2, size=2048):
+    def orthonormal(self, n=2, size=2048, mu=None):
         """Return the first `n` orthonormal legendre polynoms weighted by a 
         gaussian. They are useful as kickstart arrays for a imaginary time 
         evolution
@@ -198,9 +199,14 @@ class GenericPotential(object):
             the number of vectors (default: {2})
         size : int
             the size of each vector (default: {2048})
+        mu : float
+            a number between -1 and 1 to put the center of the gaussian
         """
         sg  = np.linspace(-1, 1, size) # short grid
         g   = gaussian(size, std=int(size/100)) # gaussian
+        if mu:
+            sigma = np.ptp(sg)/100
+            g = (1.0/np.sqrt(2*np.pi*sigma**2))*np.exp(-(sg-mu)**2 / (2*sigma**2))
         vls = [g*legendre(i)(sg) for i in range(n)]
         return np.array(vls, dtype=np.complex_)
 
@@ -282,7 +288,7 @@ class GenericPotential(object):
         psi_h_psi = simps(psi.conj()*h_psi, z)
         return (psi_h_psi / simps(psi.conj()*psi, z)).real
 
-    def bound_states(self, z, V, m, nmax=20, precision=1e-9, verbose=False):
+    def bound_states(self, z, V, m, nmax=20, precision=1e-9, verbose=False, center=None):
         """ find the bound eigenstates for a given potential `V` under the
         effective mass approximation (`m`). It uses the inverse interaction
         method. It is possible to use a z grid with varying step size,
@@ -305,6 +311,8 @@ class GenericPotential(object):
         verbose : boolean
             in case of `True`, logs and messages about the process are going
             to be printed on the screen
+        center : float
+            the center of the kickstart functions
 
         """
         N        = self.N
@@ -314,7 +322,7 @@ class GenericPotential(object):
         dz2      = dz**2
         
         # kick start eigenstates
-        eigenstates = self.orthonormal(nmax, size=N)
+        eigenstates = self.orthonormal(nmax, size=N, mu=center)
         eigenvalues = np.zeros(nmax)
         
         # matrix diagonals
@@ -436,7 +444,7 @@ class GenericPotential(object):
         return exp_v2 * ifft(exp_t * fft(exp_v2 * psi))
 
 
-    def solve_eigen_problem(self, save=True, load=True, verbose=False, nmax=10):
+    def solve_eigen_problem(self, save=True, load=True, verbose=False, nmax=10, center=None):
         """This function will calculate eigenvectors and eigenvalues,
         properly setting the results in the device's dataframe        
 
@@ -454,6 +462,9 @@ class GenericPotential(object):
         verbose : boolean
             in case of `True`, logs and messages about the process are going
             to be printed on the screen
+        center : float
+            the center for the gaussian to weight the kickstart functions the
+            default None means centered in the middle
 
         Returns
         -------
@@ -471,9 +482,9 @@ class GenericPotential(object):
         except:
             fdyn = 0.0
 
-        filename      = "{cn}_{n}_{bias:.2f}_{dyn:.2f}.csv"
+        filename      = "{cn}_{n}_{bias:.2f}_{dyn:.2f}_{center}.csv"
         filename      = filename.format(cn=self.__class__.__name__, 
-                        n=nmax, bias=fst, dyn=fdyn)
+                        n=nmax, bias=fst, dyn=fdyn, center=(center or 0))
         directory     = "devices"
         full_filename = os.path.join(directory, filename)
 
@@ -499,7 +510,7 @@ class GenericPotential(object):
         
         # calculated bound states
         bound = self.bound_states(self.z_au, self.device['v_au_ti'].values, 
-            self.device['m_eff'].values, nmax=max(20, nmax), verbose=verbose)
+            self.device['m_eff'].values, nmax=max(20, nmax), verbose=verbose, center=center)
 
         self.values = bound['eigenvalues'] * self.au2ev
         for i, state in enumerate(bound['eigenstates']):

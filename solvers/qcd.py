@@ -25,7 +25,8 @@ class QCD(GenericPotential):
         xw               = 0.0
         xb               = 0.45
         wells            = [55,13,18,23,28,35,35,32,32,41,55]
-        barriers         = [65,60,43,36,34,56,40,56,35,33,65]
+        # barriers         = [65,60,43,36,34,56,40,56,35,33,65]
+        barriers         = [65,60,43,36,34,56,40,56,35,33,0]
         structure_length = sum(wells)+sum(barriers)
         span_left        = (L - structure_length)/2
         span_right       = L - structure_length - span_left

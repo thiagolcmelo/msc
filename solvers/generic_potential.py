@@ -910,7 +910,7 @@ class GenericPotential(object):
             the current GenericPotential object for further use in 
             chain calls
         """
-        self.v_au_td = None
+        self.v_au_td = lambda t: np.ones(self.N, dtype=np.complex_)
         return self.normalize_device()
 
     def work_on(self, n=0, indexes=None):
@@ -1128,3 +1128,30 @@ class GenericPotential(object):
             j_t.append(j_r-j_l)
             
         return self.q * (simps(j_t, t_grid_au) / T_au) / T
+    
+    def evolve_state_in_time(self, T=1e-12, dt=None, verbose=False, state=0):
+        """
+        
+        Parameters
+        ----------
+        T : float
+            the total time for measuring the electric current in seconds
+        
+        Returns
+        -------
+        self : GenericPotential
+            the current GenericPotential object for further use in chain calls
+        """
+        self._set_dt(dt).turn_dyn_off()
+
+        T_au      = T / self.au_t
+        t_grid_au = np.linspace(0.0, T_au, int(T_au / self.dt_au))
+        psi       = np.array(self.device['state_%d' % state], dtype=np.complex_)
+        psi      /= np.sqrt(simps(psi*psi.conj(), self.z_au))
+        
+        for t_au in t_grid_au:
+            psi = self.time_evolution_operator(psi, t_au, self.dt_au)
+        
+        self.device['state_%d_evolved' % state] = psi.copy()
+
+        return self

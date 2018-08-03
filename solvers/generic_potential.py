@@ -757,13 +757,14 @@ class GenericPotential(object):
         # static potential (ti = time independent)
         self.v_au_ti      = self.v_ev / self.au2ev
         device['v_j']     = self.v_ev * self.ev # ev to j
-        device['v_au_ti'] = device['v_au'] = np.copy(self.v_au_ti)
-
+        
         # check whether there is any bias to apply
         try:
-            device['v_au_ti'] += self.bias_au
+            self.v_au_ti += self.bias_au
         except:
             pass
+        
+        device['v_au_ti'] = np.copy(self.v_au_ti)
 
         # device is ready
         self.device = device

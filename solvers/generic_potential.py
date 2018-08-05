@@ -1114,7 +1114,7 @@ class GenericPotential(object):
         L = np.ptp(self.z_ang)
         N = self.N
         z = np.linspace(-L/2,L/2,N)
-        killer = np.array([min(l,r) for l,r in zip(expit((400-z)/10), expit((z+400)/10))], dtype=np.complex_)
+        killer = np.array([min(l,r) for l,r in zip(expit((450-z)/5), expit((z+450)/5))], dtype=np.complex_)
         
         for t_au in t_grid_au:
             i += 1

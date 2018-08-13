@@ -2,9 +2,9 @@
 # coding: utf-8
 
 # # Estudo da Fotocorrente, Absorção, Reflexão e Transmissão em Heteroestruturas Semicondutora
-# 
+#
 # Aqui vamos analizar a heteroestrutura proposta por Degani et al [1].
-# 
+#
 # ## Bibliotecas utilizadas
 
 # In[1]:
@@ -73,8 +73,8 @@ au2ang = au_l / 1e-10  # unidades atomicas para angstrom
 
 
 # ## Perfil do Potencial
-# 
-# 
+#
+#
 
 # In[4]:
 
@@ -102,7 +102,7 @@ def algaas_gap(x):
 
 def algaas_meff(x):
     """Retorna a massa efetiva do AlGaAs em funcao da fracao de Aluminio
-    assim como os referidos autores, utilizamos a massa efetiva do 
+    assim como os referidos autores, utilizamos a massa efetiva do
     eletron no GaAs ao longo de todo o material
 
     Params
@@ -169,7 +169,7 @@ bias_j_m = bias_v_m * q
 
 
 def derivada_muda_pct(x, y, n=10, pct=0.05):
-    """encontra o ponto x onde a derivada de y(x) muda mais do que uma 
+    """encontra o ponto x onde a derivada de y(x) muda mais do que uma
     certa porcentagem pela primeira vez, da esquerda para a direita
 
     Params
@@ -236,7 +236,7 @@ dt_au = dt / au_t
 
 
 # ## Calculando Autovalores e Autovetores
-# 
+#
 # Vamos utilizar o método da interação inversa para gerar os autovalores e autovetores. Quando o potencial estático é aplicado, dentro das condições do sistema, encontramos somente o estado fundamental.
 
 # In[7]:
@@ -307,7 +307,7 @@ def eigenvalue(z, V, psi, m):
 
 def chutes_iniciais(n=2, size=1024, mu=None):
     """Retorna os n primeiros polinomios de legendre modulados por uma
-    gaussiana. 
+    gaussiana.
 
     Params
     ------
@@ -511,7 +511,7 @@ def absorption20(w_au):
 
 
 def absorption_true(energy, fosc=5.0, T=1e-12):
-    
+
     fosc_j_m = fosc * 1e2 * 1e3 * q  # KV/cm -> J/m
     T_au = T / au_t
     iters = int(T_au / dt_au)
@@ -522,14 +522,18 @@ def absorption_true(energy, fosc=5.0, T=1e-12):
     dz_au = z_au[1]-z_au[0]
     k_au = fftfreq(N, d=dz_au)
     d = np.zeros(iters, dtype=np.complex_)
-    
+    d1 = np.zeros(iters, dtype=np.complex_)
+
     psi = np.array(device.state_0, dtype=np.complex_)
     psi /= np.sqrt(simps(psi*psi.conj(), device.z_au))
-    
+
     psi1 = eigenstates[1].copy()
     psi1_au = psi1 / np.sqrt(simps(psi1.conj()*psi1,z_au))
     e1_au = eigenvalues[1] / au2ev
 
+    psi2 = eigenstates[2].copy()
+    psi2_au = psi2 / np.sqrt(simps(psi2.conj()*psi2,z_au))
+    e2_au = eigenvalues[2] / au2ev
 
     absorbing = device['z_ang'].apply(
         lambda z: min(expit((220-z)/3), expit((z+220)/3)))
@@ -543,30 +547,35 @@ def absorption_true(energy, fosc=5.0, T=1e-12):
     exp_t = np.exp(- 0.5j * (2 * np.pi * k_au) ** 2 * dt_au / meff)
     exp_v2h = np.exp(- 1.0j * v_au_ti * dt_au)
     f_espec = - 1.0j * fosc_au * dt_au
-    
+
     psi1_au_c = psi1_au.conj()
     psi1_au_c_Hp = psi1_au_c * (z_au * fosc_j_m / au_ef)
 
     for i, t_au in enumerate(t_grid_au):
         exp_v2 = exp_v2h * np.exp(f_espec * np.sin(omega_au*t_au))
         psi = ifft(exp_t * fft(exp_v2 * psi)) * absorbing
-        d[i] = np.abs(simps(psi1_au_c_Hp * np.exp(1.0j * e1_au * t_au) * psi, z_au))
+        d[i] = 2*simps(1j * psi1_au_c_Hp * np.exp(1.0j * e1_au * t_au) * psi, z_au).real
+        d1[i] = 2*simps(psi1_au_c_Hp * np.exp(1.0j * e1_au * t_au) * psi, z_au).real
 
-    return (simps(d, t_grid_au) / T_au), (simps(d.conj()*d, t_grid_au) / T_au)
+    return (simps(d*np.cos(omega_au*t_grid_au), t_grid_au) / T_au), (simps(d.conj()*d*np.cos(omega_au*t_grid_au), t_grid_au) / T_au), (simps(d1*np.cos(omega_au*t_grid_au), t_grid_au) / T_au), (simps(d1.conj()*d1*np.cos(omega_au*t_grid_au), t_grid_au) / T_au)
 
-energies = np.linspace(0.1, 0.4, 600) # energy from 100 meV to 400 meV
+energies = np.linspace(0.1, 0.4, 300)
 
 def get_abs(energy):
     pc = absorption_true(energy=energy)
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print("[%s] > Energy: %.6f eV, Abs: %.6e %.6e " % (now, energy, pc[0].real, pc[1].real))
+    print("[%s] > Energy: %.6f eV, Abs: %.6e %.6e %.6e %.6e" % (now, energy, pc[0].real, pc[1].real, pc[2].real, pc[3].real))
     return pc
 pool = Pool(processes=4)
 
 absorption_values = pool.map(get_abs, energies)
 abs1 = [a[0] for a in absorption_values]
 abs2 = [a[1] for a in absorption_values]
+abs3 = [a[2] for a in absorption_values]
+abs4 = [a[3] for a in absorption_values]
 
-np.savez("absorption_1000_1", energies, abs1)
-np.savez("absorption_1000_2", energies, abs2)
+np.savez("absorption_1_cos_j", energies, abs1)
+np.savez("absorption_2_cos_j", energies, abs2)
+np.savez("absorption_1_cos", energies, abs3)
+np.savez("absorption_2_cos", energies, abs4)
 
